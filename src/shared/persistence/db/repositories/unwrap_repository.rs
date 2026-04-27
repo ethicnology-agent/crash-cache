@@ -197,3 +197,21 @@ impl_unwrap_repository!(
     UnwrapContextValueModel,
     NewUnwrapContextValueModel
 );
+impl_unwrap_repository!(
+    UnwrapBreadcrumbCategoryRepository,
+    unwrap_breadcrumb_category,
+    UnwrapBreadcrumbCategoryModel,
+    NewUnwrapBreadcrumbCategoryModel
+);
+impl_unwrap_repository!(
+    UnwrapBreadcrumbTypeRepository,
+    unwrap_breadcrumb_type,
+    UnwrapBreadcrumbTypeModel,
+    NewUnwrapBreadcrumbTypeModel
+);
+impl_unwrap_repository!(
+    UnwrapBreadcrumbLevelRepository,
+    unwrap_breadcrumb_level,
+    UnwrapBreadcrumbLevelModel,
+    NewUnwrapBreadcrumbLevelModel
+);

@@ -6,9 +6,14 @@ use diesel::sql_query;
 use crate::shared::persistence::DbPool;
 
 const TABLES_TO_CLEAR: &[&str] = &[
+    "report_breadcrumb",
     "report_tag",
     "report_context",
     "report",
+    "unwrap_breadcrumb",
+    "unwrap_breadcrumb_category",
+    "unwrap_breadcrumb_type",
+    "unwrap_breadcrumb_level",
     "unwrap_stacktrace",
     "issue",
     "unwrap_exception_message",

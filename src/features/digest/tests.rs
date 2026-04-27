@@ -16,6 +16,7 @@ fn clean_test_db(pool: &crate::shared::persistence::DbPool) {
     use diesel::prelude::*;
     let mut conn = pool.get().expect("Failed to get connection");
     let tables = [
+        "report_breadcrumb",
         "report_tag",
         "report_context",
         "report",
@@ -25,6 +26,10 @@ fn clean_test_db(pool: &crate::shared::persistence::DbPool) {
         "unwrap_session_status",
         "unwrap_session_release",
         "unwrap_session_environment",
+        "unwrap_breadcrumb",
+        "unwrap_breadcrumb_category",
+        "unwrap_breadcrumb_type",
+        "unwrap_breadcrumb_level",
         "unwrap_stacktrace",
         "unwrap_exception_message",
         "unwrap_exception_type",
@@ -279,6 +284,195 @@ fn test_process_coerces_non_string_tag_values() {
     // 3 stored: string + numeric + bool. Null skipped.
     let tag_count: i64 = report_tag::table.count().get_result(&mut conn).unwrap();
     assert_eq!(tag_count, 3, "expected 3 tags (null skipped)");
+}
+
+#[test]
+fn test_process_extracts_breadcrumbs_with_dedup() {
+    use diesel::prelude::*;
+    use crate::shared::persistence::db::schema::{report_breadcrumb, unwrap_breadcrumb};
+
+    let (repos, pool, project_id) = setup_test_db();
+    let compressor = GzipCompressor::new();
+
+    let ingest_use_case = IngestReportUseCase::new(
+        repos.archive.clone(),
+        repos.queue.clone(),
+        repos.project.clone(),
+    );
+    let process_use_case = DigestReportUseCase::new(repos.clone(), pool.clone(), compressor);
+
+    // Two events from the same session — bc[0] and bc[1] are physically the
+    // same breadcrumbs (identical timestamp/category/type/level/data).
+    // Event B has one extra trailing breadcrumb that A doesn't.
+    let payload_a = r#"{
+        "event_id": "ev-a",
+        "platform": "other",
+        "breadcrumbs": [
+            {"timestamp":"2026-04-27T09:17:26.496Z","category":"app.lifecycle","type":"navigation","level":"info","data":{"state":"resumed"}},
+            {"timestamp":"2026-04-27T09:17:26.800Z","category":"app.lifecycle","type":"navigation","level":"info","data":{"state":"paused"}}
+        ]
+    }"#.as_bytes().to_vec();
+    let payload_b = r#"{
+        "event_id": "ev-b",
+        "platform": "other",
+        "breadcrumbs": [
+            {"timestamp":"2026-04-27T09:17:26.496Z","category":"app.lifecycle","type":"navigation","level":"info","data":{"state":"resumed"}},
+            {"timestamp":"2026-04-27T09:17:26.800Z","category":"app.lifecycle","type":"navigation","level":"info","data":{"state":"paused"}},
+            {"timestamp":"2026-04-27T09:17:27.050Z","category":"app.lifecycle","type":"navigation","level":"info","data":{"state":"resumed"}}
+        ]
+    }"#.as_bytes().to_vec();
+
+    let (h_a, c_a) = compress_and_hash(&payload_a);
+    let (h_b, c_b) = compress_and_hash(&payload_b);
+    let mut conn = pool.get().unwrap();
+    ingest_use_case.execute(&mut conn, project_id, h_a, c_a, None).unwrap();
+    ingest_use_case.execute(&mut conn, project_id, h_b, c_b, None).unwrap();
+
+    assert_eq!(process_use_case.process_batch(10).unwrap(), 2);
+
+    // Join rows: 2 + 3 = 5
+    let join_count: i64 = report_breadcrumb::table.count().get_result(&mut conn).unwrap();
+    assert_eq!(join_count, 5, "expected 5 join rows (2 from A + 3 from B)");
+
+    // Physical breadcrumbs: 3 (the two shared ones + one B-only).
+    // Note: third B breadcrumb has identical category/type/level/data but a
+    // different timestamp, so it's a distinct unwrap row by design.
+    let unwrap_count: i64 = unwrap_breadcrumb::table.count().get_result(&mut conn).unwrap();
+    assert_eq!(unwrap_count, 3, "expected 3 deduped unwrap rows");
+}
+
+#[test]
+fn test_process_breadcrumbs_seq_preserved() {
+    use diesel::prelude::*;
+    use crate::shared::persistence::db::schema::{report_breadcrumb, unwrap_breadcrumb};
+
+    let (repos, pool, project_id) = setup_test_db();
+    let compressor = GzipCompressor::new();
+
+    let ingest_use_case = IngestReportUseCase::new(
+        repos.archive.clone(),
+        repos.queue.clone(),
+        repos.project.clone(),
+    );
+    let process_use_case = DigestReportUseCase::new(repos.clone(), pool.clone(), compressor);
+
+    let payload = r#"{
+        "event_id": "ev-seq",
+        "platform": "other",
+        "breadcrumbs": [
+            {"timestamp":"2026-04-27T09:17:26.001Z","category":"a","type":"navigation","level":"info"},
+            {"timestamp":"2026-04-27T09:17:26.002Z","category":"b","type":"navigation","level":"info"},
+            {"timestamp":"2026-04-27T09:17:26.003Z","category":"c","type":"navigation","level":"info"}
+        ]
+    }"#.as_bytes().to_vec();
+    let (h, c) = compress_and_hash(&payload);
+    let mut conn = pool.get().unwrap();
+    ingest_use_case.execute(&mut conn, project_id, h, c, None).unwrap();
+    assert_eq!(process_use_case.process_batch(10).unwrap(), 1);
+
+    let rows: Vec<(i32, i64)> = report_breadcrumb::table
+        .inner_join(unwrap_breadcrumb::table)
+        .select((report_breadcrumb::seq, unwrap_breadcrumb::timestamp.assume_not_null()))
+        .order(report_breadcrumb::seq.asc())
+        .load(&mut conn)
+        .unwrap();
+    assert_eq!(rows.len(), 3);
+    // seq strictly increasing alongside timestamp
+    assert_eq!(rows[0].0, 0);
+    assert_eq!(rows[1].0, 1);
+    assert_eq!(rows[2].0, 2);
+    assert!(rows[0].1 < rows[1].1 && rows[1].1 < rows[2].1);
+}
+
+/// End-to-end against the real-world `crash.jsonl` sample at the repo root.
+/// Skipped by default (no fixture in CI); run manually with:
+///   `DATABASE_URL=... cargo test e2e_crash_jsonl_breadcrumbs -- --ignored --test-threads=1 --nocapture`
+#[test]
+#[ignore]
+fn e2e_crash_jsonl_breadcrumbs() {
+    use diesel::prelude::*;
+    use crate::shared::persistence::db::schema::{report_breadcrumb, unwrap_breadcrumb};
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crash.jsonl");
+    let raw = std::fs::read_to_string(&path).expect("crash.jsonl missing");
+    let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
+
+    let (repos, pool, project_id) = setup_test_db();
+    let compressor = GzipCompressor::new();
+    let ingest_use_case = IngestReportUseCase::new(
+        repos.archive.clone(),
+        repos.queue.clone(),
+        repos.project.clone(),
+    );
+    let process_use_case = DigestReportUseCase::new(repos.clone(), pool.clone(), compressor);
+
+    let mut conn = pool.get().unwrap();
+    let mut expected_breadcrumb_total: usize = 0;
+    let mut events_with_bc: usize = 0;
+    for line in &lines {
+        let v: serde_json::Value = serde_json::from_str(line).expect("bad jsonl line");
+        if let Some(bc) = v.get("breadcrumbs").and_then(|b| b.as_array()) {
+            expected_breadcrumb_total += bc.len();
+            if !bc.is_empty() {
+                events_with_bc += 1;
+            }
+        }
+        let (h, c) = compress_and_hash(line.as_bytes());
+        ingest_use_case
+            .execute(&mut conn, project_id, h, c, None)
+            .unwrap();
+    }
+    process_use_case.process_batch(1000).unwrap();
+
+    let join_count: i64 = report_breadcrumb::table.count().get_result(&mut conn).unwrap();
+    let unwrap_count: i64 = unwrap_breadcrumb::table.count().get_result(&mut conn).unwrap();
+
+    println!(
+        "crash.jsonl: {} lines, {} events with breadcrumbs, {} breadcrumbs in source",
+        lines.len(),
+        events_with_bc,
+        expected_breadcrumb_total
+    );
+    println!(
+        "DB: {} report_breadcrumb rows, {} unwrap_breadcrumb rows (dedup ratio = {:.2}x)",
+        join_count,
+        unwrap_count,
+        join_count as f64 / unwrap_count.max(1) as f64
+    );
+
+    assert_eq!(
+        join_count as usize, expected_breadcrumb_total,
+        "join rows must equal total source breadcrumbs"
+    );
+    assert!(
+        unwrap_count <= join_count,
+        "unwrap_count cannot exceed join_count"
+    );
+}
+
+#[test]
+fn test_process_handles_missing_breadcrumbs() {
+    use diesel::prelude::*;
+    use crate::shared::persistence::db::schema::report_breadcrumb;
+
+    let (repos, pool, project_id) = setup_test_db();
+    let compressor = GzipCompressor::new();
+
+    let ingest_use_case = IngestReportUseCase::new(
+        repos.archive.clone(),
+        repos.queue.clone(),
+        repos.project.clone(),
+    );
+    let process_use_case = DigestReportUseCase::new(repos.clone(), pool.clone(), compressor);
+
+    let payload = r#"{"event_id":"ev-no-bc","platform":"other"}"#.as_bytes().to_vec();
+    let (h, c) = compress_and_hash(&payload);
+    let mut conn = pool.get().unwrap();
+    ingest_use_case.execute(&mut conn, project_id, h, c, None).unwrap();
+    assert_eq!(process_use_case.process_batch(10).unwrap(), 1);
+
+    let join_count: i64 = report_breadcrumb::table.count().get_result(&mut conn).unwrap();
+    assert_eq!(join_count, 0);
 }
 
 #[test]

@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use tracing::{error, info, warn};
 
 use crate::shared::compression::GzipCompressor;
-use crate::shared::domain::{DomainError, QueueItem, SentryReport};
+use crate::shared::domain::{DomainError, QueueItem, SentryBreadcrumb, SentryReport};
 use crate::shared::parser::{Envelope, SentrySession};
 use crate::shared::persistence::db::models::NewSessionModel;
 use crate::shared::persistence::{
@@ -166,6 +166,7 @@ impl DigestReportUseCase {
         let report_id = self.repos.report.create(conn, new_report)?;
         self.extract_tags(conn, report_id, &sentry_report)?;
         self.extract_contexts(conn, report_id, &sentry_report)?;
+        self.extract_breadcrumbs(conn, report_id, &sentry_report)?;
         self.repos.queue.remove(conn, &item.archive_hash)?;
 
         Ok(())
@@ -225,6 +226,123 @@ impl DigestReportUseCase {
             pairs.push((key_id, value_id));
         }
         self.repos.report_context.insert_all(conn, report_id, &pairs)
+    }
+
+    /// Persist every breadcrumb. The same physical breadcrumb is shared across
+    /// every report whose capture timeline included it, so the row goes into
+    /// `unwrap_breadcrumb` (hash-deduped, mirrors `unwrap_stacktrace`) and the
+    /// per-report ordering lives in `report_breadcrumb` as a thin
+    /// (report_id, seq, breadcrumb_id) join (mirrors `report_tag`).
+    /// Hash domain: timestamp + category + type + level + data (canonical JSON).
+    fn extract_breadcrumbs(
+        &self,
+        conn: &mut DbConnection,
+        report_id: i32,
+        report: &SentryReport,
+    ) -> Result<(), DomainError> {
+        let breadcrumbs = match &report.breadcrumbs {
+            Some(b) => b,
+            None => return Ok(()),
+        };
+        if breadcrumbs.is_empty() {
+            return Ok(());
+        }
+        let mut breadcrumb_ids: Vec<i32> = Vec::with_capacity(breadcrumbs.len());
+        for bc in breadcrumbs {
+            let timestamp = bc.timestamp.as_ref().and_then(|ts| {
+                chrono::DateTime::parse_from_rfc3339(ts)
+                    .ok()
+                    .map(|dt| dt.timestamp_millis())
+            });
+            let category_id = match bc.category.as_deref() {
+                Some(v) if !v.is_empty() => {
+                    Some(self.repos.breadcrumb_category.get_or_create(conn, v)?)
+                }
+                _ => None,
+            };
+            let type_id = match bc.breadcrumb_type.as_deref() {
+                Some(v) if !v.is_empty() => {
+                    Some(self.repos.breadcrumb_type.get_or_create(conn, v)?)
+                }
+                _ => None,
+            };
+            let level_id = match bc.level.as_deref() {
+                Some(v) if !v.is_empty() => {
+                    Some(self.repos.breadcrumb_level.get_or_create(conn, v)?)
+                }
+                _ => None,
+            };
+            let data = Self::merge_breadcrumb_data(bc);
+            let hash = self.compute_hash(
+                Self::breadcrumb_canonical_form(timestamp, bc, data.as_ref()).as_bytes(),
+            );
+            let breadcrumb_id = self.repos.breadcrumb.get_or_create(
+                conn,
+                &hash,
+                timestamp,
+                category_id,
+                type_id,
+                level_id,
+                data,
+            )?;
+            breadcrumb_ids.push(breadcrumb_id);
+        }
+        self.repos
+            .report_breadcrumb
+            .insert_all(conn, report_id, &breadcrumb_ids)
+    }
+
+    /// Build the deterministic JSON string used as input to `compute_hash`.
+    /// `serde_json::Value::Object` uses BTreeMap (`preserve_order` feature off),
+    /// so nested object keys serialize alphabetically — the resulting string
+    /// is stable across runs even when input key order differs.
+    fn breadcrumb_canonical_form(
+        timestamp: Option<i64>,
+        bc: &SentryBreadcrumb,
+        data: Option<&serde_json::Value>,
+    ) -> String {
+        let canon = serde_json::json!({
+            "category": bc.category,
+            "data": data,
+            "level": bc.level,
+            "timestamp": timestamp,
+            "type": bc.breadcrumb_type,
+        });
+        serde_json::to_string(&canon).unwrap_or_default()
+    }
+
+    /// Merge `breadcrumb.data` (object) with `breadcrumb.message` (string) into
+    /// a single JSONB column. Returns None when both absent so the column stays NULL.
+    fn merge_breadcrumb_data(bc: &SentryBreadcrumb) -> Option<serde_json::Value> {
+        match (bc.data.as_ref(), bc.message.as_ref()) {
+            (None, None) => None,
+            (Some(serde_json::Value::Object(obj)), Some(msg)) => {
+                let mut merged = obj.clone();
+                merged.insert(
+                    "message".to_string(),
+                    serde_json::Value::String(msg.clone()),
+                );
+                Some(serde_json::Value::Object(merged))
+            }
+            (Some(other), Some(msg)) => {
+                let mut merged = serde_json::Map::new();
+                merged.insert("data".to_string(), other.clone());
+                merged.insert(
+                    "message".to_string(),
+                    serde_json::Value::String(msg.clone()),
+                );
+                Some(serde_json::Value::Object(merged))
+            }
+            (Some(data), None) => Some(data.clone()),
+            (None, Some(msg)) => {
+                let mut obj = serde_json::Map::new();
+                obj.insert(
+                    "message".to_string(),
+                    serde_json::Value::String(msg.clone()),
+                );
+                Some(serde_json::Value::Object(obj))
+            }
+        }
     }
 
     /// Extract session from envelope and store it (with connection), returning the session_id if found

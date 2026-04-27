@@ -1,10 +1,12 @@
 mod analytics_repository;
 mod archive_repository;
+mod breadcrumb_repository;
 mod device_specs_repository;
 mod exception_message_repository;
 mod issue_repository;
 mod project_repository;
 mod queue_repository;
+mod report_breadcrumb_repository;
 mod report_context_repository;
 mod report_repository;
 mod report_tag_repository;
@@ -14,11 +16,13 @@ mod unwrap_repository;
 
 pub use analytics_repository::AnalyticsRepository;
 pub use archive_repository::ArchiveRepository;
+pub use breadcrumb_repository::BreadcrumbRepository;
 pub use device_specs_repository::{DeviceSpecsParams, DeviceSpecsRepository};
 pub use exception_message_repository::ExceptionMessageRepository;
 pub use issue_repository::IssueRepository;
 pub use project_repository::ProjectRepository;
 pub use queue_repository::{QueueErrorRepository, QueueRepository};
+pub use report_breadcrumb_repository::ReportBreadcrumbRepository;
 pub use report_context_repository::ReportContextRepository;
 pub use report_repository::{NewReport, ReportRepository};
 pub use report_tag_repository::ReportTagRepository;
@@ -63,6 +67,12 @@ pub struct Repositories {
     pub context_value: UnwrapContextValueRepository,
     pub report_tag: ReportTagRepository,
     pub report_context: ReportContextRepository,
+    // Breadcrumb dimensions
+    pub breadcrumb_category: UnwrapBreadcrumbCategoryRepository,
+    pub breadcrumb_type: UnwrapBreadcrumbTypeRepository,
+    pub breadcrumb_level: UnwrapBreadcrumbLevelRepository,
+    pub breadcrumb: BreadcrumbRepository,
+    pub report_breadcrumb: ReportBreadcrumbRepository,
     // Session repositories
     pub session: SessionRepository,
     pub session_status: UnwrapSessionStatusRepository,
@@ -108,6 +118,12 @@ impl Repositories {
             context_value: UnwrapContextValueRepository::new(pool.clone()),
             report_tag: ReportTagRepository::new(pool.clone()),
             report_context: ReportContextRepository::new(pool.clone()),
+            // Breadcrumb dimensions
+            breadcrumb_category: UnwrapBreadcrumbCategoryRepository::new(pool.clone()),
+            breadcrumb_type: UnwrapBreadcrumbTypeRepository::new(pool.clone()),
+            breadcrumb_level: UnwrapBreadcrumbLevelRepository::new(pool.clone()),
+            breadcrumb: BreadcrumbRepository::new(pool.clone()),
+            report_breadcrumb: ReportBreadcrumbRepository::new(pool.clone()),
             // Session repositories
             session: SessionRepository::new(pool.clone()),
             session_status: UnwrapSessionStatusRepository::new(pool.clone()),

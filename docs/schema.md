@@ -182,6 +182,41 @@ erDiagram
     }
     
     %% ============================================
+    %% BREADCRUMB TABLES
+    %% ============================================
+    
+    unwrap_breadcrumb_category {
+        INTEGER id PK
+        TEXT value UK
+    }
+    
+    unwrap_breadcrumb_type {
+        INTEGER id PK
+        TEXT value UK
+    }
+    
+    unwrap_breadcrumb_level {
+        INTEGER id PK
+        TEXT value UK
+    }
+    
+    unwrap_breadcrumb {
+        INTEGER id PK
+        TEXT hash UK
+        BIGINT timestamp "epoch ms, nullable"
+        INTEGER category_id FK
+        INTEGER type_id FK
+        INTEGER level_id FK
+        JSONB data "merged with breadcrumb.message"
+    }
+    
+    report_breadcrumb {
+        INTEGER report_id PK,FK
+        INTEGER seq PK
+        INTEGER breadcrumb_id FK
+    }
+    
+    %% ============================================
     %% ISSUE TABLE
     %% ============================================
     
@@ -270,7 +305,21 @@ erDiagram
     unwrap_session_status ||--o{ session : "status"
     unwrap_session_release ||--o{ session : "release"
     unwrap_session_environment ||--o{ session : "environment"
+    
+    report ||--o{ report_breadcrumb : "trail"
+    unwrap_breadcrumb ||--o{ report_breadcrumb : "physical bc"
+    unwrap_breadcrumb_category ||--o{ unwrap_breadcrumb : "category"
+    unwrap_breadcrumb_type ||--o{ unwrap_breadcrumb : "type"
+    unwrap_breadcrumb_level ||--o{ unwrap_breadcrumb : "level"
 ```
+
+## Breadcrumbs
+
+The Sentry SDK attaches an ordered timeline of "breadcrumbs" to every captured event — recent app lifecycle / navigation / HTTP / UI events. Multiple events from the same user session typically share the most recent N breadcrumbs verbatim, so storage uses the same hash-deduped pattern as `unwrap_stacktrace`:
+
+- `unwrap_breadcrumb` — one row per **physical** breadcrumb (timestamp + category + type + level + data). `hash` is SHA256 of a canonical JSON form so the same breadcrumb captured by two events resolves to the same row.
+- `report_breadcrumb` — thin join `(report_id, seq, breadcrumb_id)`. `seq` preserves the SDK's chronological ordering (oldest → newest, 0-based). PK is `(report_id, seq)`.
+- The breadcrumb's `data` JSONB merges the SDK's `breadcrumb.data` object with `breadcrumb.message` (when present); NULL when both are absent.
 
 ## Table Summary
 
@@ -279,6 +328,7 @@ erDiagram
 | **Core** | `project`, `archive`, `queue`, `queue_error` | Project config, raw storage, async processing |
 | **Session** | `session`, `unwrap_session_*` | User session tracking and health metrics |
 | **Unwrap** | 20 `unwrap_*` tables | Deduplicated string values (normalized) |
+| **Breadcrumb** | `unwrap_breadcrumb`, `unwrap_breadcrumb_{category,type,level}`, `report_breadcrumb` | Per-event breadcrumb timeline (hash-deduped physical rows) |
 | **Issue** | `issue` | Error grouping by fingerprint |
 | **Main** | `report` | Central table with 22 FK references |
 | **Analytics** | `bucket_rate_limit_global`, `bucket_rate_limit_dsn`, `bucket_rate_limit_subnet`, `bucket_request_latency` | Aggregated metrics for rate limiting and request performance |
@@ -384,6 +434,8 @@ Aggregated request latency metrics per endpoint.
 | `idx_session_status` | session | status_id | Filter sessions by status |
 | `idx_session_sid` | session | sid | Find session by sid |
 | `idx_report_session` | report | session_id | Find reports by session |
+| `idx_unwrap_breadcrumb_timestamp` | unwrap_breadcrumb | timestamp | Time-based breadcrumb queries |
+| `idx_report_breadcrumb_breadcrumb` | report_breadcrumb | breadcrumb_id | Reverse lookup: which reports include a given breadcrumb |
 | `idx_bucket_rate_limit_global_start` | bucket_rate_limit_global | bucket_start | Time-based cleanup |
 | `idx_bucket_rate_limit_dsn_start` | bucket_rate_limit_dsn | bucket_start | Time-based cleanup |
 | `idx_bucket_rate_limit_subnet_start` | bucket_rate_limit_subnet | bucket_start | Time-based cleanup |

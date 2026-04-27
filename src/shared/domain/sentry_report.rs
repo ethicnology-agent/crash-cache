@@ -16,9 +16,22 @@ pub struct SentryReport {
     pub exception: Option<SentryException>,
     pub user: Option<SentryUser>,
     pub request: Option<serde_json::Value>,
-    pub breadcrumbs: Option<serde_json::Value>,
+    pub breadcrumbs: Option<Vec<SentryBreadcrumb>>,
     #[serde(flatten)]
     pub unknown: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SentryBreadcrumb {
+    pub timestamp: Option<String>,
+    pub category: Option<String>,
+    #[serde(rename = "type")]
+    pub breadcrumb_type: Option<String>,
+    pub level: Option<String>,
+    pub message: Option<String>,
+    pub data: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -135,7 +135,8 @@ fn test_ingest_stores_archive() {
         )
         .unwrap();
 
-    assert_eq!(result_hash, hash);
+    assert_eq!(result_hash.hash, hash);
+    assert!(!result_hash.duplicate);
 
     let archive = archive_repo.find_by_hash(&mut conn, &hash).unwrap();
     assert!(archive.is_some());
@@ -156,7 +157,7 @@ fn test_deduplication_same_hash_reuses_archive() {
     let (hash, compressed) = compress_and_hash(&payload);
 
     let mut conn = pool.get().unwrap();
-    let hash1 = use_case
+    let result1 = use_case
         .execute(
             &mut conn,
             project_id,
@@ -165,16 +166,18 @@ fn test_deduplication_same_hash_reuses_archive() {
             None,
         )
         .unwrap();
-    let hash2 = use_case
+    let result2 = use_case
         .execute(&mut conn, project_id, hash.clone(), compressed, None)
         .unwrap();
 
-    assert_eq!(hash1, hash2);
+    assert_eq!(result1.hash, result2.hash);
+    assert!(!result1.duplicate);
+    assert!(result2.duplicate);
 
     let pending_count = queue_repo.count_pending(&mut conn).unwrap();
     assert_eq!(pending_count, 1);
 
-    assert!(archive_repo.exists(&mut conn, &hash1).unwrap());
+    assert!(archive_repo.exists(&mut conn, &result1.hash).unwrap());
 }
 
 #[test]
@@ -193,7 +196,7 @@ fn test_different_payloads_different_hashes() {
         .execute(&mut conn, project_id, hash2.clone(), compressed2, None)
         .unwrap();
 
-    assert_ne!(result1, result2);
+    assert_ne!(result1.hash, result2.hash);
 }
 
 #[test]

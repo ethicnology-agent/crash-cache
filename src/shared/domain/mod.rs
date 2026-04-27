@@ -9,7 +9,7 @@ pub use error::DomainError;
 pub use project::Project;
 pub use queue::{QueueError, QueueItem};
 pub use sentry_report::{
-    SentryAppContext, SentryContext, SentryContexts, SentryCultureContext, SentryDeviceContext,
-    SentryException, SentryExceptionValue, SentryOsContext, SentryReport, SentrySdk,
-    SentryStacktrace, SentryStacktraceFrame, SentryUser,
+    SentryAppContext, SentryBreadcrumb, SentryContext, SentryContexts, SentryCultureContext,
+    SentryDeviceContext, SentryException, SentryExceptionValue, SentryOsContext, SentryReport,
+    SentrySdk, SentryStacktrace, SentryStacktraceFrame, SentryUser,
 };

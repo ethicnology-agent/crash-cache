@@ -3,13 +3,15 @@ use diesel::prelude::*;
 
 use super::schema::{
     archive, bucket_rate_limit_dsn, bucket_rate_limit_global, bucket_rate_limit_subnet,
-    bucket_request_latency, issue, project, queue, queue_error, report, report_context, report_tag,
-    session, unwrap_app_build, unwrap_app_name, unwrap_app_version, unwrap_brand, unwrap_chipset,
-    unwrap_connection_type, unwrap_device_specs, unwrap_environment, unwrap_exception_message,
-    unwrap_exception_type, unwrap_context_key, unwrap_context_value, unwrap_locale_code,
-    unwrap_manufacturer, unwrap_model, unwrap_orientation, unwrap_os_name, unwrap_os_version,
-    unwrap_platform, unwrap_session_environment, unwrap_session_release, unwrap_session_status,
-    unwrap_stacktrace, unwrap_tag_key, unwrap_tag_value, unwrap_timezone, unwrap_user,
+    bucket_request_latency, issue, project, queue, queue_error, report, report_breadcrumb,
+    report_context, report_tag, session, unwrap_app_build, unwrap_app_name, unwrap_app_version,
+    unwrap_brand, unwrap_breadcrumb, unwrap_breadcrumb_category, unwrap_breadcrumb_level,
+    unwrap_breadcrumb_type, unwrap_chipset, unwrap_connection_type, unwrap_context_key,
+    unwrap_context_value, unwrap_device_specs, unwrap_environment, unwrap_exception_message,
+    unwrap_exception_type, unwrap_locale_code, unwrap_manufacturer, unwrap_model,
+    unwrap_orientation, unwrap_os_name, unwrap_os_version, unwrap_platform,
+    unwrap_session_environment, unwrap_session_release, unwrap_session_status, unwrap_stacktrace,
+    unwrap_tag_key, unwrap_tag_value, unwrap_timezone, unwrap_user,
 };
 
 // ============================================
@@ -609,6 +611,80 @@ pub struct ReportContextModel {
     pub report_id: i32,
     pub key_id: i32,
     pub value_id: i32,
+}
+
+// ============================================
+// BREADCRUMB MODELS
+// ============================================
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = unwrap_breadcrumb_category)]
+pub struct UnwrapBreadcrumbCategoryModel {
+    pub id: i32,
+    pub value: String,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = unwrap_breadcrumb_category)]
+pub struct NewUnwrapBreadcrumbCategoryModel {
+    pub value: String,
+}
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = unwrap_breadcrumb_type)]
+pub struct UnwrapBreadcrumbTypeModel {
+    pub id: i32,
+    pub value: String,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = unwrap_breadcrumb_type)]
+pub struct NewUnwrapBreadcrumbTypeModel {
+    pub value: String,
+}
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = unwrap_breadcrumb_level)]
+pub struct UnwrapBreadcrumbLevelModel {
+    pub id: i32,
+    pub value: String,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = unwrap_breadcrumb_level)]
+pub struct NewUnwrapBreadcrumbLevelModel {
+    pub value: String,
+}
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = unwrap_breadcrumb)]
+pub struct UnwrapBreadcrumbModel {
+    pub id: i32,
+    pub hash: String,
+    pub timestamp: Option<i64>,
+    pub category_id: Option<i32>,
+    pub type_id: Option<i32>,
+    pub level_id: Option<i32>,
+    pub data: Option<serde_json::Value>,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = unwrap_breadcrumb)]
+pub struct NewUnwrapBreadcrumbModel {
+    pub hash: String,
+    pub timestamp: Option<i64>,
+    pub category_id: Option<i32>,
+    pub type_id: Option<i32>,
+    pub level_id: Option<i32>,
+    pub data: Option<serde_json::Value>,
+}
+
+#[derive(Queryable, Selectable, Insertable, Debug, Clone)]
+#[diesel(table_name = report_breadcrumb, primary_key(report_id, seq))]
+pub struct ReportBreadcrumbModel {
+    pub report_id: i32,
+    pub seq: i32,
+    pub breadcrumb_id: i32,
 }
 
 // ============================================

@@ -302,6 +302,39 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    unwrap_breadcrumb_category (id) {
+        id -> Integer,
+        value -> Text,
+    }
+}
+
+diesel::table! {
+    unwrap_breadcrumb_type (id) {
+        id -> Integer,
+        value -> Text,
+    }
+}
+
+diesel::table! {
+    unwrap_breadcrumb_level (id) {
+        id -> Integer,
+        value -> Text,
+    }
+}
+
+diesel::table! {
+    unwrap_breadcrumb (id) {
+        id -> Integer,
+        hash -> Text,
+        timestamp -> Nullable<BigInt>,
+        category_id -> Nullable<Integer>,
+        type_id -> Nullable<Integer>,
+        level_id -> Nullable<Integer>,
+        data -> Nullable<Jsonb>,
+    }
+}
+
 // ============================================
 // ISSUE TABLE
 // ============================================
@@ -382,6 +415,14 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    report_breadcrumb (report_id, seq) {
+        report_id -> Integer,
+        seq -> Integer,
+        breadcrumb_id -> Integer,
+    }
+}
+
 // ============================================
 // JOINABLE RELATIONS
 // ============================================
@@ -423,6 +464,11 @@ diesel::joinable!(report_tag -> unwrap_tag_value (value_id));
 diesel::joinable!(report_context -> report (report_id));
 diesel::joinable!(report_context -> unwrap_context_key (key_id));
 diesel::joinable!(report_context -> unwrap_context_value (value_id));
+diesel::joinable!(report_breadcrumb -> report (report_id));
+diesel::joinable!(report_breadcrumb -> unwrap_breadcrumb (breadcrumb_id));
+diesel::joinable!(unwrap_breadcrumb -> unwrap_breadcrumb_category (category_id));
+diesel::joinable!(unwrap_breadcrumb -> unwrap_breadcrumb_type (type_id));
+diesel::joinable!(unwrap_breadcrumb -> unwrap_breadcrumb_level (level_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     project,
@@ -463,6 +509,11 @@ diesel::allow_tables_to_appear_in_same_query!(
     unwrap_tag_value,
     unwrap_context_key,
     unwrap_context_value,
+    unwrap_breadcrumb_category,
+    unwrap_breadcrumb_type,
+    unwrap_breadcrumb_level,
+    unwrap_breadcrumb,
     report_tag,
     report_context,
+    report_breadcrumb,
 );

@@ -205,6 +205,38 @@ CREATE TABLE IF NOT EXISTS unwrap_stacktrace (
 );
 
 -- ============================================
+-- BREADCRUMB UNWRAP TABLES
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS unwrap_breadcrumb_category (
+    id SERIAL PRIMARY KEY,
+    value TEXT UNIQUE NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS unwrap_breadcrumb_type (
+    id SERIAL PRIMARY KEY,
+    value TEXT UNIQUE NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS unwrap_breadcrumb_level (
+    id SERIAL PRIMARY KEY,
+    value TEXT UNIQUE NOT NULL
+);
+
+-- Whole-row dedup, hash-keyed (mirrors unwrap_stacktrace).
+-- The same physical breadcrumb is shared across every report whose capture
+-- timeline included it.
+CREATE TABLE IF NOT EXISTS unwrap_breadcrumb (
+    id SERIAL PRIMARY KEY,
+    hash TEXT UNIQUE NOT NULL,
+    timestamp BIGINT,
+    category_id INTEGER REFERENCES unwrap_breadcrumb_category(id),
+    type_id INTEGER REFERENCES unwrap_breadcrumb_type(id),
+    level_id INTEGER REFERENCES unwrap_breadcrumb_level(id),
+    data JSONB
+);
+
+-- ============================================
 -- ISSUE TABLE
 -- ============================================
 
@@ -304,6 +336,14 @@ CREATE TABLE IF NOT EXISTS report_context (
     PRIMARY KEY (report_id, key_id)
 );
 
+-- Thin (report_id, seq, breadcrumb_id) join (mirrors report_tag/report_context)
+CREATE TABLE IF NOT EXISTS report_breadcrumb (
+    report_id     INTEGER NOT NULL REFERENCES report(id) ON DELETE CASCADE,
+    seq           INTEGER NOT NULL,
+    breadcrumb_id INTEGER NOT NULL REFERENCES unwrap_breadcrumb(id),
+    PRIMARY KEY (report_id, seq)
+);
+
 -- ============================================
 -- INDEXES
 -- ============================================
@@ -323,6 +363,8 @@ CREATE INDEX IF NOT EXISTS idx_report_tag_key   ON report_tag(key_id);
 CREATE INDEX IF NOT EXISTS idx_report_tag_value ON report_tag(value_id);
 CREATE INDEX IF NOT EXISTS idx_report_context_key   ON report_context(key_id);
 CREATE INDEX IF NOT EXISTS idx_report_context_value ON report_context(value_id);
+CREATE INDEX IF NOT EXISTS idx_unwrap_breadcrumb_timestamp ON unwrap_breadcrumb(timestamp);
+CREATE INDEX IF NOT EXISTS idx_report_breadcrumb_breadcrumb ON report_breadcrumb(breadcrumb_id);
 
 -- ============================================
 -- ANALYTICS BUCKET TABLES
