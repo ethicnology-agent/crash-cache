@@ -159,6 +159,26 @@ CREATE TABLE IF NOT EXISTS unwrap_exception_type (
     value TEXT UNIQUE NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS unwrap_tag_key (
+    id SERIAL PRIMARY KEY,
+    value TEXT UNIQUE NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS unwrap_tag_value (
+    id SERIAL PRIMARY KEY,
+    value TEXT UNIQUE NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS unwrap_context_key (
+    id SERIAL PRIMARY KEY,
+    value TEXT UNIQUE NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS unwrap_context_value (
+    id SERIAL PRIMARY KEY,
+    value TEXT UNIQUE NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS unwrap_device_specs (
     id SERIAL PRIMARY KEY,
     screen_width INTEGER,
@@ -267,6 +287,24 @@ CREATE TABLE IF NOT EXISTS report (
 );
 
 -- ============================================
+-- REPORT JOIN TABLES (generic K/V tags + extras)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS report_tag (
+    report_id INTEGER NOT NULL REFERENCES report(id) ON DELETE CASCADE,
+    key_id    INTEGER NOT NULL REFERENCES unwrap_tag_key(id),
+    value_id  INTEGER NOT NULL REFERENCES unwrap_tag_value(id),
+    PRIMARY KEY (report_id, key_id)
+);
+
+CREATE TABLE IF NOT EXISTS report_context (
+    report_id INTEGER NOT NULL REFERENCES report(id) ON DELETE CASCADE,
+    key_id    INTEGER NOT NULL REFERENCES unwrap_context_key(id),
+    value_id  INTEGER NOT NULL REFERENCES unwrap_context_value(id),
+    PRIMARY KEY (report_id, key_id)
+);
+
+-- ============================================
 -- INDEXES
 -- ============================================
 
@@ -281,6 +319,10 @@ CREATE INDEX IF NOT EXISTS idx_session_project ON session(project_id);
 CREATE INDEX IF NOT EXISTS idx_session_status ON session(status_id);
 CREATE INDEX IF NOT EXISTS idx_session_sid ON session(sid);
 CREATE INDEX IF NOT EXISTS idx_report_session ON report(session_id);
+CREATE INDEX IF NOT EXISTS idx_report_tag_key   ON report_tag(key_id);
+CREATE INDEX IF NOT EXISTS idx_report_tag_value ON report_tag(value_id);
+CREATE INDEX IF NOT EXISTS idx_report_context_key   ON report_context(key_id);
+CREATE INDEX IF NOT EXISTS idx_report_context_value ON report_context(value_id);
 
 -- ============================================
 -- ANALYTICS BUCKET TABLES

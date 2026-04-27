@@ -163,10 +163,68 @@ impl DigestReportUseCase {
             session_id,
         };
 
-        self.repos.report.create(conn, new_report)?;
+        let report_id = self.repos.report.create(conn, new_report)?;
+        self.extract_tags(conn, report_id, &sentry_report)?;
+        self.extract_contexts(conn, report_id, &sentry_report)?;
         self.repos.queue.remove(conn, &item.archive_hash)?;
 
         Ok(())
+    }
+
+    /// Extract every `event.tags` K/V into the `report_tag` join table.
+    /// Sentry tag spec: values are strings; coerce non-strings via to_string()
+    /// and skip nulls.
+    fn extract_tags(
+        &self,
+        conn: &mut DbConnection,
+        report_id: i32,
+        report: &SentryReport,
+    ) -> Result<(), DomainError> {
+        let map = match &report.tags {
+            Some(m) => m,
+            None => return Ok(()),
+        };
+        let mut pairs: Vec<(i32, i32)> = Vec::with_capacity(map.len());
+        for (k, v) in map {
+            let value_str = match v {
+                serde_json::Value::Null => continue,
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let key_id = self.repos.tag_key.get_or_create(conn, k)?;
+            let value_id = self.repos.tag_value.get_or_create(conn, &value_str)?;
+            pairs.push((key_id, value_id));
+        }
+        self.repos.report_tag.insert_all(conn, report_id, &pairs)
+    }
+
+    /// Extract every CUSTOM context into the `report_context` join table.
+    /// Built-in contexts (device/os/app/...) are already extracted via
+    /// dedicated `unwrap_*` columns and skipped here. Only the flatten
+    /// catch-all `SentryContexts.extra` is iterated. One row per top-level
+    /// context name; value is the JSON-encoded payload (no flattening).
+    fn extract_contexts(
+        &self,
+        conn: &mut DbConnection,
+        report_id: i32,
+        report: &SentryReport,
+    ) -> Result<(), DomainError> {
+        let contexts = match &report.contexts {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let mut pairs: Vec<(i32, i32)> = Vec::with_capacity(contexts.extra.len());
+        for (ctx_name, ctx_value) in &contexts.extra {
+            if matches!(ctx_value, serde_json::Value::Null) {
+                continue;
+            }
+            let value_str = serde_json::to_string(ctx_value)
+                .unwrap_or_else(|_| ctx_value.to_string());
+            let key_id = self.repos.context_key.get_or_create(conn, ctx_name)?;
+            let value_id = self.repos.context_value.get_or_create(conn, &value_str)?;
+            pairs.push((key_id, value_id));
+        }
+        self.repos.report_context.insert_all(conn, report_id, &pairs)
     }
 
     /// Extract session from envelope and store it (with connection), returning the session_id if found

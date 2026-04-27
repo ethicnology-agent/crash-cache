@@ -6,6 +6,8 @@ use diesel::sql_query;
 use crate::shared::persistence::DbPool;
 
 const TABLES_TO_CLEAR: &[&str] = &[
+    "report_tag",
+    "report_context",
     "report",
     "unwrap_stacktrace",
     "issue",
@@ -28,6 +30,10 @@ const TABLES_TO_CLEAR: &[&str] = &[
     "unwrap_app_build",
     "unwrap_user",
     "unwrap_exception_type",
+    "unwrap_tag_key",
+    "unwrap_tag_value",
+    "unwrap_context_key",
+    "unwrap_context_value",
     "queue",
     "queue_error",
     // Session tables

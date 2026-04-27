@@ -173,3 +173,27 @@ impl_unwrap_repository!(
     UnwrapExceptionTypeModel,
     NewUnwrapExceptionTypeModel
 );
+impl_unwrap_repository!(
+    UnwrapTagKeyRepository,
+    unwrap_tag_key,
+    UnwrapTagKeyModel,
+    NewUnwrapTagKeyModel
+);
+impl_unwrap_repository!(
+    UnwrapTagValueRepository,
+    unwrap_tag_value,
+    UnwrapTagValueModel,
+    NewUnwrapTagValueModel
+);
+impl_unwrap_repository!(
+    UnwrapContextKeyRepository,
+    unwrap_context_key,
+    UnwrapContextKeyModel,
+    NewUnwrapContextKeyModel
+);
+impl_unwrap_repository!(
+    UnwrapContextValueRepository,
+    unwrap_context_value,
+    UnwrapContextValueModel,
+    NewUnwrapContextValueModel
+);

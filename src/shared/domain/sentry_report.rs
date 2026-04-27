@@ -18,7 +18,7 @@ pub struct SentryReport {
     pub request: Option<serde_json::Value>,
     pub breadcrumbs: Option<serde_json::Value>,
     #[serde(flatten)]
-    pub extra: HashMap<String, serde_json::Value>,
+    pub unknown: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

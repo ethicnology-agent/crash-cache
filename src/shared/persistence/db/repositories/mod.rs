@@ -5,7 +5,9 @@ mod exception_message_repository;
 mod issue_repository;
 mod project_repository;
 mod queue_repository;
+mod report_context_repository;
 mod report_repository;
+mod report_tag_repository;
 mod session_repository;
 mod stacktrace_repository;
 mod unwrap_repository;
@@ -17,7 +19,9 @@ pub use exception_message_repository::ExceptionMessageRepository;
 pub use issue_repository::IssueRepository;
 pub use project_repository::ProjectRepository;
 pub use queue_repository::{QueueErrorRepository, QueueRepository};
+pub use report_context_repository::ReportContextRepository;
 pub use report_repository::{NewReport, ReportRepository};
+pub use report_tag_repository::ReportTagRepository;
 pub use session_repository::*;
 pub use stacktrace_repository::StacktraceRepository;
 pub use unwrap_repository::*;
@@ -52,6 +56,13 @@ pub struct Repositories {
     pub exception_message: ExceptionMessageRepository,
     pub stacktrace: StacktraceRepository,
     pub issue: IssueRepository,
+    // Tag/Context dimensions
+    pub tag_key: UnwrapTagKeyRepository,
+    pub tag_value: UnwrapTagValueRepository,
+    pub context_key: UnwrapContextKeyRepository,
+    pub context_value: UnwrapContextValueRepository,
+    pub report_tag: ReportTagRepository,
+    pub report_context: ReportContextRepository,
     // Session repositories
     pub session: SessionRepository,
     pub session_status: UnwrapSessionStatusRepository,
@@ -90,6 +101,13 @@ impl Repositories {
             exception_message: ExceptionMessageRepository::new(pool.clone()),
             stacktrace: StacktraceRepository::new(pool.clone()),
             issue: IssueRepository::new(pool.clone()),
+            // Tag/Context dimensions
+            tag_key: UnwrapTagKeyRepository::new(pool.clone()),
+            tag_value: UnwrapTagValueRepository::new(pool.clone()),
+            context_key: UnwrapContextKeyRepository::new(pool.clone()),
+            context_value: UnwrapContextValueRepository::new(pool.clone()),
+            report_tag: ReportTagRepository::new(pool.clone()),
+            report_context: ReportContextRepository::new(pool.clone()),
             // Session repositories
             session: SessionRepository::new(pool.clone()),
             session_status: UnwrapSessionStatusRepository::new(pool.clone()),

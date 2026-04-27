@@ -3,12 +3,13 @@ use diesel::prelude::*;
 
 use super::schema::{
     archive, bucket_rate_limit_dsn, bucket_rate_limit_global, bucket_rate_limit_subnet,
-    bucket_request_latency, issue, project, queue, queue_error, report, session, unwrap_app_build,
-    unwrap_app_name, unwrap_app_version, unwrap_brand, unwrap_chipset, unwrap_connection_type,
-    unwrap_device_specs, unwrap_environment, unwrap_exception_message, unwrap_exception_type,
-    unwrap_locale_code, unwrap_manufacturer, unwrap_model, unwrap_orientation, unwrap_os_name,
-    unwrap_os_version, unwrap_platform, unwrap_session_environment, unwrap_session_release,
-    unwrap_session_status, unwrap_stacktrace, unwrap_timezone, unwrap_user,
+    bucket_request_latency, issue, project, queue, queue_error, report, report_context, report_tag,
+    session, unwrap_app_build, unwrap_app_name, unwrap_app_version, unwrap_brand, unwrap_chipset,
+    unwrap_connection_type, unwrap_device_specs, unwrap_environment, unwrap_exception_message,
+    unwrap_exception_type, unwrap_context_key, unwrap_context_value, unwrap_locale_code,
+    unwrap_manufacturer, unwrap_model, unwrap_orientation, unwrap_os_name, unwrap_os_version,
+    unwrap_platform, unwrap_session_environment, unwrap_session_release, unwrap_session_status,
+    unwrap_stacktrace, unwrap_tag_key, unwrap_tag_value, unwrap_timezone, unwrap_user,
 };
 
 // ============================================
@@ -372,6 +373,58 @@ pub struct NewUnwrapExceptionTypeModel {
 }
 
 #[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = unwrap_tag_key)]
+pub struct UnwrapTagKeyModel {
+    pub id: i32,
+    pub value: String,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = unwrap_tag_key)]
+pub struct NewUnwrapTagKeyModel {
+    pub value: String,
+}
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = unwrap_tag_value)]
+pub struct UnwrapTagValueModel {
+    pub id: i32,
+    pub value: String,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = unwrap_tag_value)]
+pub struct NewUnwrapTagValueModel {
+    pub value: String,
+}
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = unwrap_context_key)]
+pub struct UnwrapContextKeyModel {
+    pub id: i32,
+    pub value: String,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = unwrap_context_key)]
+pub struct NewUnwrapContextKeyModel {
+    pub value: String,
+}
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = unwrap_context_value)]
+pub struct UnwrapContextValueModel {
+    pub id: i32,
+    pub value: String,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = unwrap_context_value)]
+pub struct NewUnwrapContextValueModel {
+    pub value: String,
+}
+
+#[derive(Queryable, Selectable, Debug, Clone)]
 #[diesel(table_name = unwrap_device_specs)]
 pub struct UnwrapDeviceSpecsModel {
     pub id: i32,
@@ -536,6 +589,26 @@ pub struct NewReportModel {
     pub stacktrace_id: Option<i32>,
     pub issue_id: Option<i32>,
     pub session_id: Option<i32>,
+}
+
+// ============================================
+// REPORT JOIN MODELS (tags + contexts)
+// ============================================
+
+#[derive(Queryable, Selectable, Insertable, Debug, Clone)]
+#[diesel(table_name = report_tag, primary_key(report_id, key_id))]
+pub struct ReportTagModel {
+    pub report_id: i32,
+    pub key_id: i32,
+    pub value_id: i32,
+}
+
+#[derive(Queryable, Selectable, Insertable, Debug, Clone)]
+#[diesel(table_name = report_context, primary_key(report_id, key_id))]
+pub struct ReportContextModel {
+    pub report_id: i32,
+    pub key_id: i32,
+    pub value_id: i32,
 }
 
 // ============================================

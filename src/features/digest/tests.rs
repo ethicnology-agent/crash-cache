@@ -16,6 +16,8 @@ fn clean_test_db(pool: &crate::shared::persistence::DbPool) {
     use diesel::prelude::*;
     let mut conn = pool.get().expect("Failed to get connection");
     let tables = [
+        "report_tag",
+        "report_context",
         "report",
         "queue_error",
         "queue",
@@ -26,6 +28,10 @@ fn clean_test_db(pool: &crate::shared::persistence::DbPool) {
         "unwrap_stacktrace",
         "unwrap_exception_message",
         "unwrap_exception_type",
+        "unwrap_tag_key",
+        "unwrap_tag_value",
+        "unwrap_context_key",
+        "unwrap_context_value",
         "unwrap_device_specs",
         "unwrap_user",
         "unwrap_app_build",
@@ -159,6 +165,120 @@ fn test_process_batch_returns_zero_when_empty() {
 
     let processed = process_use_case.process_batch(10).unwrap();
     assert_eq!(processed, 0);
+}
+
+#[test]
+fn test_process_extracts_tags_and_contexts() {
+    use diesel::prelude::*;
+    use crate::shared::persistence::db::schema::{report_tag, report_context};
+
+    let (repos, pool, project_id) = setup_test_db();
+    let compressor = GzipCompressor::new();
+
+    let ingest_use_case = IngestReportUseCase::new(
+        repos.archive.clone(),
+        repos.queue.clone(),
+        repos.project.clone(),
+    );
+    let process_use_case = DigestReportUseCase::new(repos.clone(), pool.clone(), compressor);
+
+    // Event with rich tags + custom contexts (mirrors BULL's Report.dart shape).
+    // Built-in contexts (device, os, app, ...) are extracted via dedicated
+    // unwrap_* tables; only the unknown ones flow into report_context.
+    let payload = r#"{
+        "event_id": "tag-test-1",
+        "release": "com.bullbitcoin.mobile@6.9.1+177",
+        "platform": "other",
+        "tags": {
+            "category": "error",
+            "migration_type": "install",
+            "to_version": "6.9.1+177",
+            "event.origin": "flutter"
+        },
+        "contexts": {
+            "os": {"name": "Android", "version": "15"},
+            "dev_message": "Failed to load wallet",
+            "feature": {"flag": "wallet_v2", "enabled": true}
+        }
+    }"#.as_bytes().to_vec();
+    let (hash, compressed) = compress_and_hash(&payload);
+    let mut conn = pool.get().unwrap();
+    ingest_use_case
+        .execute(&mut conn, project_id, hash, compressed, None)
+        .unwrap();
+
+    assert_eq!(process_use_case.process_batch(10).unwrap(), 1);
+
+    let tag_count: i64 = report_tag::table.count().get_result(&mut conn).unwrap();
+    assert_eq!(tag_count, 4, "expected 4 tags persisted");
+
+    // Only `dev_message` (primitive) + `feature` (object) — `os` is built-in
+    // and goes to unwrap_os_*, not report_context.
+    let context_count: i64 = report_context::table.count().get_result(&mut conn).unwrap();
+    assert_eq!(context_count, 2, "expected 2 custom contexts persisted (os is built-in, skipped)");
+}
+
+#[test]
+fn test_process_handles_missing_tags_and_contexts() {
+    let (repos, pool, project_id) = setup_test_db();
+    let compressor = GzipCompressor::new();
+
+    let ingest_use_case = IngestReportUseCase::new(
+        repos.archive.clone(),
+        repos.queue.clone(),
+        repos.project.clone(),
+    );
+    let process_use_case = DigestReportUseCase::new(repos, pool.clone(), compressor);
+
+    // Event without tags or contexts — should still ingest cleanly
+    let payload = r#"{"event_id": "no-tags-1", "platform": "other"}"#.as_bytes().to_vec();
+    let (hash, compressed) = compress_and_hash(&payload);
+    let mut conn = pool.get().unwrap();
+    ingest_use_case
+        .execute(&mut conn, project_id, hash, compressed, None)
+        .unwrap();
+
+    assert_eq!(process_use_case.process_batch(10).unwrap(), 1);
+}
+
+#[test]
+fn test_process_coerces_non_string_tag_values() {
+    use diesel::prelude::*;
+    use crate::shared::persistence::db::schema::report_tag;
+
+    let (repos, pool, project_id) = setup_test_db();
+    let compressor = GzipCompressor::new();
+
+    let ingest_use_case = IngestReportUseCase::new(
+        repos.archive.clone(),
+        repos.queue.clone(),
+        repos.project.clone(),
+    );
+    let process_use_case = DigestReportUseCase::new(repos.clone(), pool.clone(), compressor);
+
+    // Tag values are technically supposed to be strings; coerce numbers/bools,
+    // skip nulls.
+    let payload = r#"{
+        "event_id": "coerce-1",
+        "platform": "other",
+        "tags": {
+            "string_tag": "ok",
+            "numeric_tag": 42,
+            "bool_tag": true,
+            "null_tag": null
+        }
+    }"#.as_bytes().to_vec();
+    let (hash, compressed) = compress_and_hash(&payload);
+    let mut conn = pool.get().unwrap();
+    ingest_use_case
+        .execute(&mut conn, project_id, hash, compressed, None)
+        .unwrap();
+
+    assert_eq!(process_use_case.process_batch(10).unwrap(), 1);
+
+    // 3 stored: string + numeric + bool. Null skipped.
+    let tag_count: i64 = report_tag::table.count().get_result(&mut conn).unwrap();
+    assert_eq!(tag_count, 3, "expected 3 tags (null skipped)");
 }
 
 #[test]

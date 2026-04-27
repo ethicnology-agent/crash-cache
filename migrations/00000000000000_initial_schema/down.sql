@@ -11,6 +11,10 @@ DROP TABLE IF EXISTS bucket_rate_limit_dsn;
 DROP TABLE IF EXISTS bucket_rate_limit_global;
 
 -- Drop indexes
+DROP INDEX IF EXISTS idx_report_context_value;
+DROP INDEX IF EXISTS idx_report_context_key;
+DROP INDEX IF EXISTS idx_report_tag_value;
+DROP INDEX IF EXISTS idx_report_tag_key;
 DROP INDEX IF EXISTS idx_report_session;
 DROP INDEX IF EXISTS idx_session_sid;
 DROP INDEX IF EXISTS idx_session_status;
@@ -21,6 +25,10 @@ DROP INDEX IF EXISTS idx_report_issue;
 DROP INDEX IF EXISTS idx_report_timestamp;
 DROP INDEX IF EXISTS idx_report_project;
 DROP INDEX IF EXISTS idx_archive_project;
+
+-- Drop join tables (reverse order of dependencies)
+DROP TABLE IF EXISTS report_context;
+DROP TABLE IF EXISTS report_tag;
 
 -- Drop main tables (reverse order of dependencies)
 DROP TABLE IF EXISTS report;
@@ -36,6 +44,10 @@ DROP TABLE IF EXISTS unwrap_session_status;
 DROP TABLE IF EXISTS unwrap_stacktrace;
 DROP TABLE IF EXISTS unwrap_exception_message;
 DROP TABLE IF EXISTS unwrap_device_specs;
+DROP TABLE IF EXISTS unwrap_context_value;
+DROP TABLE IF EXISTS unwrap_context_key;
+DROP TABLE IF EXISTS unwrap_tag_value;
+DROP TABLE IF EXISTS unwrap_tag_key;
 DROP TABLE IF EXISTS unwrap_exception_type;
 DROP TABLE IF EXISTS unwrap_user;
 DROP TABLE IF EXISTS unwrap_app_build;

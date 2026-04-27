@@ -245,6 +245,34 @@ diesel::table! {
 }
 
 diesel::table! {
+    unwrap_tag_key (id) {
+        id -> Integer,
+        value -> Text,
+    }
+}
+
+diesel::table! {
+    unwrap_tag_value (id) {
+        id -> Integer,
+        value -> Text,
+    }
+}
+
+diesel::table! {
+    unwrap_context_key (id) {
+        id -> Integer,
+        value -> Text,
+    }
+}
+
+diesel::table! {
+    unwrap_context_value (id) {
+        id -> Integer,
+        value -> Text,
+    }
+}
+
+diesel::table! {
     unwrap_device_specs (id) {
         id -> Integer,
         screen_width -> Nullable<Integer>,
@@ -335,6 +363,26 @@ diesel::table! {
 }
 
 // ============================================
+// REPORT JOIN TABLES (tags + contexts)
+// ============================================
+
+diesel::table! {
+    report_tag (report_id, key_id) {
+        report_id -> Integer,
+        key_id -> Integer,
+        value_id -> Integer,
+    }
+}
+
+diesel::table! {
+    report_context (report_id, key_id) {
+        report_id -> Integer,
+        key_id -> Integer,
+        value_id -> Integer,
+    }
+}
+
+// ============================================
 // JOINABLE RELATIONS
 // ============================================
 
@@ -369,6 +417,12 @@ diesel::joinable!(session -> unwrap_session_status (status_id));
 diesel::joinable!(session -> unwrap_session_release (release_id));
 diesel::joinable!(session -> unwrap_session_environment (environment_id));
 diesel::joinable!(report -> session (session_id));
+diesel::joinable!(report_tag -> report (report_id));
+diesel::joinable!(report_tag -> unwrap_tag_key (key_id));
+diesel::joinable!(report_tag -> unwrap_tag_value (value_id));
+diesel::joinable!(report_context -> report (report_id));
+diesel::joinable!(report_context -> unwrap_context_key (key_id));
+diesel::joinable!(report_context -> unwrap_context_value (value_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     project,
@@ -405,4 +459,10 @@ diesel::allow_tables_to_appear_in_same_query!(
     bucket_rate_limit_dsn,
     bucket_rate_limit_subnet,
     bucket_request_latency,
+    unwrap_tag_key,
+    unwrap_tag_value,
+    unwrap_context_key,
+    unwrap_context_value,
+    report_tag,
+    report_context,
 );
