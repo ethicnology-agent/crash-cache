@@ -100,11 +100,21 @@ impl DigestReportUseCase {
         // Try to parse as envelope first to extract session
         let session_id = self.extract_and_store_session(conn, decompressed, project_id)?;
 
+        if let Some(envelope) = Envelope::parse(decompressed).filter(|envelope| !envelope.items.is_empty()) {
+            crate::shared::persistence::rich_telemetry::store_envelope_context(conn, project_id, &item.archive_hash, &envelope)?;
+            if native_report.is_none() && envelope.find_event_payload().is_none() {
+                self.repos.queue.remove(conn, &item.archive_hash)?;
+                return Ok(());
+            }
+        }
+
         // Try parsing as raw JSON first, then as envelope format
-        let sentry_report: SentryReport = match native_report {
+        let mut sentry_report: SentryReport = match native_report {
             Some(report) => report,
             None => self.parse_payload(decompressed)?,
         };
+
+        sentry_report.resolve_exception_thread_stacks();
 
         // The event savepoint may roll back a duplicate without discarding newer
         // session updates carried by the same envelope.

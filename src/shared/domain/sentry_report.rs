@@ -126,7 +126,35 @@ pub struct SentryExceptionValue {
     #[serde(rename = "type")]
     pub exception_type: Option<String>,
     pub value: Option<String>,
+    pub thread_id: Option<SentryThreadId>,
     pub stacktrace: Option<SentryStacktrace>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SentryThreadId {
+    Number(u64),
+    Text(String),
+}
+
+impl SentryThreadId {
+    fn key(&self) -> String {
+        match self {
+            Self::Number(value) => value.to_string(),
+            Self::Text(value) => value.parse::<u64>().map(|number| number.to_string()).unwrap_or_else(|_| value.clone()),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SentryThreads {
+    values: Vec<SentryThread>,
+}
+
+#[derive(Deserialize)]
+struct SentryThread {
+    id: SentryThreadId,
+    stacktrace: Option<SentryStacktrace>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +178,28 @@ pub struct SentryStacktraceFrame {
 }
 
 impl SentryReport {
+    /// Android SDKs may keep exception frames under the associated thread.
+    /// Resolve only an explicit, unambiguous ID; an exception's own stack wins.
+    pub fn resolve_exception_thread_stacks(&mut self) {
+        let Some(threads) = self.unknown.get("threads").and_then(|value| {
+            serde_json::from_value::<SentryThreads>(value.clone()).ok()
+        }) else { return; };
+        let Some(exceptions) = self.exception.as_mut().and_then(|value| value.values.as_mut()) else { return; };
+        let mut stacks: HashMap<String, Option<&SentryStacktrace>> = HashMap::new();
+        for thread in &threads.values {
+            stacks.entry(thread.id.key())
+                .and_modify(|stack| *stack = None)
+                .or_insert(thread.stacktrace.as_ref());
+        }
+        for exception in exceptions {
+            if exception.stacktrace.is_some() { continue; }
+            if let Some(stack) = exception.thread_id.as_ref()
+                .and_then(|id| stacks.get(&id.key())).and_then(|stack| *stack) {
+                exception.stacktrace = Some(stack.clone());
+            }
+        }
+    }
+
     pub fn extract_app_version(&self) -> Option<String> {
         if let Some(release) = &self.release {
             if let Some(version) = release.split('@').next_back() {
@@ -207,6 +257,45 @@ impl SentryReport {
 #[cfg(test)]
 mod protocol_tests {
     use super::SentryReport;
+
+    #[test]
+    fn exception_thread_stacks_require_an_unambiguous_matching_id() {
+        let frame = serde_json::json!({"filename":"probe.gd","vars":{"piece_count":12}});
+        for (threads, expected) in [
+            (serde_json::json!([{"id":7,"stacktrace":{"frames":[frame.clone()]}}]), true),
+            (serde_json::json!([{"id":"7","stacktrace":{"frames":[frame.clone()]}}]), true),
+            (serde_json::json!([{"id":8,"stacktrace":{"frames":[frame.clone()]}}]), false),
+            (serde_json::json!([{"id":7,"stacktrace":{"frames":[frame.clone()]}},{"id":"7","stacktrace":{"frames":[frame.clone()]}}]), false),
+        ] {
+            let mut report: SentryReport = serde_json::from_value(serde_json::json!({
+                "exception":{"values":[{"type":"Failure","thread_id":7}]},
+                "threads":{"values":threads}
+            })).unwrap();
+            report.resolve_exception_thread_stacks();
+            let exceptions = report.exception.unwrap().values.unwrap();
+            let stack = &exceptions[0].stacktrace;
+            assert_eq!(stack.is_some(), expected);
+            if let Some(stack) = stack {
+                assert_eq!(stack.frames.as_ref().unwrap()[0].extra["vars"]["piece_count"],12);
+            }
+        }
+    }
+
+    #[test]
+    fn exception_thread_stacks_preserve_explicit_stack_and_ignore_missing_id() {
+        for exception in [
+            serde_json::json!({"type":"Failure","thread_id":7,"stacktrace":{"frames":[]}}),
+            serde_json::json!({"type":"Failure"}),
+        ] {
+            let mut report: SentryReport = serde_json::from_value(serde_json::json!({
+                "exception":{"values":[exception.clone()]},
+                "threads":{"values":[{"id":7,"stacktrace":{"frames":[{"filename":"wrong.gd"}]}}]}
+            })).unwrap();
+            report.resolve_exception_thread_stacks();
+            let saved = serde_json::to_value(report.exception.unwrap().values.unwrap()[0].clone()).unwrap();
+            assert_eq!(saved["stacktrace"],exception.get("stacktrace").cloned().unwrap_or(serde_json::Value::Null));
+        }
+    }
 
     #[test]
     fn accepts_numeric_event_and_breadcrumb_timestamps() {

@@ -300,6 +300,7 @@ async fn minidump_report(
         Ok(multipart) => multipart,
         Err(rejection) => return rejection.into_response(),
     };
+    let mut attachments: Vec<(String, Option<String>, String, Vec<u8>)> = Vec::new();
     let mut dump: Option<Vec<u8>> = None;
     let mut event: Option<serde_json::Value> = None;
     loop {
@@ -309,6 +310,8 @@ async fn minidump_report(
             Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"Invalid multipart body"}))).into_response(),
         };
         let name = field.name().unwrap_or_default().to_owned();
+        let filename = field.file_name().map(str::to_owned);
+        let content_type = field.content_type().unwrap_or("application/octet-stream").to_owned();
         let bytes = match field.bytes().await {
             Ok(bytes) if bytes.len() <= state.max_uncompressed_payload_bytes => bytes,
             _ => return (StatusCode::PAYLOAD_TOO_LARGE, Json(serde_json::json!({"error":"Invalid or oversized minidump field"}))).into_response(),
@@ -330,7 +333,7 @@ async fn minidump_report(
                 }
             }
             "upload_file_minidump" => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"Multiple minidumps"}))).into_response(),
-            _ => (),
+            _ => attachments.push((name, filename, content_type, bytes.to_vec())),
         }
     }
     let Some(dump) = dump else {
@@ -345,6 +348,13 @@ async fn minidump_report(
     envelope.extend_from_slice(&event_bytes);
     envelope.extend_from_slice(format!("\n{}\n", serde_json::json!({"type":"attachment","attachment_type":"event.minidump","length":dump.len(),"filename":"crash.dmp"})).as_bytes());
     envelope.extend_from_slice(&dump);
+    for (name, filename, content_type, bytes) in attachments {
+        envelope.extend_from_slice(format!("\n{}\n", serde_json::json!({
+            "type":"attachment", "attachment_type":"event.attachment",
+            "length":bytes.len(), "filename":filename.unwrap_or(name), "content_type":content_type
+        })).as_bytes());
+        envelope.extend_from_slice(&bytes);
+    }
     headers.remove("content-encoding");
     envelope_report(State(state), Path(project_id), Query(query), headers, Bytes::from(envelope)).await.into_response()
 }
@@ -434,7 +444,12 @@ async fn envelope_report(
     }
     let has_event = event_count == 1 || minidump_count == 1;
 
-    if !has_event {
+    let has_logs = envelope.items.iter().any(|item| item.header.item_type == "log");
+    let has_attachments = envelope.items.iter().any(|item| item.header.item_type == "attachment");
+    if let Err(error) = crate::shared::parser::sentry_log::parse_logs(&envelope) {
+        return map_domain_error_to_response(&error);
+    }
+    if !has_event && !has_logs && !has_attachments {
         let payloads = envelope.find_session_payloads();
         if payloads.is_empty() {
             return (
@@ -470,9 +485,10 @@ async fn envelope_report(
     if header_id.is_some() && body_id.is_some() && header_id != body_id {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Envelope and event IDs differ"})));
     }
-    let Some(event_id) = header_id.or(body_id) else {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Event requires a valid event_id"})));
-    };
+    let event_id = header_id.or(body_id);
+    if (has_event || has_attachments) && event_id.is_none() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Event or attachment requires a valid event_id"})));
+    }
 
     match state.ingest_use_case.execute(
         &mut conn,
@@ -851,6 +867,9 @@ mod protocol_tests {
             body.extend_from_slice(b"\r\n--test-boundary\r\nContent-Disposition: form-data; name=\"upload_file_minidump\"; filename=\"synthetic.dmp\"\r\nContent-Type: application/octet-stream\r\n\r\n");
         }
         body.extend(std::iter::repeat_n(b'x', dump_size));
+        if metadata.is_some() {
+            body.extend_from_slice(b"\r\n--test-boundary\r\nContent-Disposition: form-data; name=\"__sentry-breadcrumb1\"; filename=\"__sentry-breadcrumb1\"\r\nContent-Type: application/octet-stream\r\n\r\n\x00\xffopaque\nbytes");
+        }
         body.extend_from_slice(b"\r\n--test-boundary--\r\n");
         let body = if gzip_body { compress(&body).unwrap() } else { body };
         let mut request = Request::builder().method("POST")
@@ -873,6 +892,9 @@ mod protocol_tests {
             assert_eq!(event["user"], expected["user"]);
             assert_eq!(event["tags"], expected["tags"]);
             assert_eq!(event["contexts"], expected["contexts"]);
+            let attachment = envelope.items.iter().find(|item| item.header.extra.get("filename").and_then(serde_json::Value::as_str) == Some("__sentry-breadcrumb1")).expect("opaque Crashpad attachment must survive normalization");
+            assert_eq!(attachment.payload, b"\x00\xffopaque\nbytes");
+            assert_eq!(attachment.header.content_type.as_deref(), Some("application/octet-stream"));
         }
         status
     }
