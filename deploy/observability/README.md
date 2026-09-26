@@ -26,6 +26,34 @@ The database initialization script runs only on the first initialization of the 
 
 The configured memory ceilings total approximately 3.7 GiB without dashboards and 4.7 GiB with dashboards; these are limits, not measured usage or minimum host requirements. Build memory is separate. The application payload ceilings are laboratory settings suitable for native dump testing, not a proven production sizing recommendation.
 
+## Create a project and configure client DSNs
+
+Inside the configured crash-cache container, create a project with a positional name:
+
+```sh
+podman compose --env-file deploy/observability/.env \
+  -f deploy/observability/compose.yml --profile observability \
+  exec crash-cache crash-cache project create my-application
+```
+
+Use the same Compose project name and environment as the deployment; if it was started with `-p`, include that same option here. On a directly installed server with its database environment loaded, the equivalent command is `crash-cache project create my-application`. `crash-cache project create --help` documents `[NAME]` and optional `--key`; there is no `--name` flag. The command prints the project ID and an example DSN. Avoid creating another project merely to recover its configuration: `crash-cache project list` lists existing project keys and IDs in the operator terminal.
+
+A client DSN has the form `https://PUBLIC_KEY@errors.example.com/PROJECT_ID`. Preserve the issued key and project ID, but replace the printed scheme, hostname and port with the ingestion address reachable from that client. The current CLI builds its example from the configured bind address and always prints `http://`; it cannot infer a public TLS proxy, forwarded host port or external hostname. In particular, `0.0.0.0` is a listen address, and a container service name is generally not reachable from a phone.
+
+| Address | Purpose | Consumer |
+| --- | --- | --- |
+| `CRASH_CACHE_HOST` / `CRASH_CACHE_PORT` | Server listen address inside its runtime | crash-cache process |
+| `CRASH_CACHE_LAB_PORT` | Loopback host port mapped to the container | Local tests or an explicitly configured proxy/tunnel |
+| Public HTTPS ingestion origin | Externally reachable address, with forwarding to crash-cache | Sentry SDK DSN |
+| `METABASE_URL` | Dashboard and administration API | Dashboard provisioner/browser, never Sentry SDKs |
+| `DATABASE_URL` | PostgreSQL connection | Backend/operator tooling, never client applications |
+
+The opt-in Compose stack binds ingestion to host loopback and does not provision a public domain or TLS terminator. For remote clients, configure an HTTPS reverse proxy or a deliberate tunnel to that endpoint; preserve ingestion paths, query parameters and Sentry authentication headers, and configure request-size/time limits compatible with the intended envelope/minidump sizes. TLS deployment remains operator-owned. Do not embed database credentials or Metabase administrator credentials in a client DSN.
+
+Give each application the DSN through that application's own configuration mechanism. crash-cache does not require a Flutter, Godot or Rust-specific configuration file. Shared-process applications should coordinate SDK initialization and session ownership in their own repository. Use separate projects when distinct test/production datasets are needed: the maintained dashboards filter by project/date and do not currently offer a global environment filter.
+
+`GET /health` proves server reachability, not event persistence. After configuring a client, submit an identified controlled event, confirm it is digested into the intended project, and inspect its platform/release classification. Test sessions, logs, attachments and native crash symbols separately when the application uses them. Archive receipt without successful digestion is not delivery evidence. Consult [validation evidence](../../docs/observability-validation.md) for the tested protocol subset and known limitations.
+
 ## Provision the dashboard
 
 Set these variables in a private operator environment, using the running instance and a project already created through `crash-cache project create`:
