@@ -121,6 +121,10 @@ cp .env.example .env
 
 5. Configure your Sentry SDK with the DSN from step 3.
 
+## Optional native crash and observability laboratory
+
+For an isolated Podman or Docker deployment with pinned Symbolicator, a private symbol source and optional ready-to-provision Metabase dashboards, follow [the observability laboratory guide](deploy/observability/README.md). Its project and volumes are separate from the root Compose deployment. [Session and analytics semantics](docs/observability.md) explain installation counting, healthy-device observations and deduplication limits.
+
 ## Configuration
 
 All configuration is done via environment variables (or `.env` file). See `.env.example` for full documentation with sizing profiles (SMALL / MEDIUM / LARGE).
