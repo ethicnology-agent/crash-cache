@@ -2,6 +2,8 @@
 
 The maintained dashboards belong to crash-cache and work against its normalized database. They do not depend on a game, engine or application repository. Configure the database connection, project ID and date range; use the same provisioner for mobile, desktop, web and backend Sentry clients. Available evidence depends on the SDK, its configuration and the ingestion formats supported by crash-cache. This is not a claim of complete Sentry protocol compatibility.
 
+For authenticated exploration, per-event evidence and administrator attachment access, see [the Explorer workspace](explorer.md). It complements these aggregate dashboards and does not publish raw evidence anonymously.
+
 ## Views and evidence requirements
 
 | View | Evidence used | Client requirements |
