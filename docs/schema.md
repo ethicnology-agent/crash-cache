@@ -66,6 +66,10 @@ erDiagram
         INTEGER status_id FK
         INTEGER release_id FK
         INTEGER environment_id FK
+        TEXT distinct_id "SHA-256 installation identity"
+        TEXT sequence "Unsigned logical clock"
+        DOUBLE duration "Seconds"
+        TEXT abnormal_mechanism
     }
     
     %% ============================================
@@ -440,3 +444,7 @@ Aggregated request latency metrics per endpoint.
 | `idx_bucket_rate_limit_dsn_start` | bucket_rate_limit_dsn | bucket_start | Time-based cleanup |
 | `idx_bucket_rate_limit_subnet_start` | bucket_rate_limit_subnet | bucket_start | Time-based cleanup |
 | `idx_bucket_request_latency_start` | bucket_request_latency | bucket_start | Time-based cleanup |
+
+## Session analytics
+
+See [application sessions and diagnostics](observability.md) for identity, ordering, supported protocol scope and read-only dashboard queries. Session uniqueness is `(project_id, sid)`; event occurrence uniqueness is `(project_id, event_id)`.

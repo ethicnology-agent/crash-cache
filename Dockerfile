@@ -34,7 +34,7 @@ RUN mkdir -p .cargo && \
     echo '[profile.release.package."*"]' >> .cargo/config.toml && \
     echo 'opt-level = 1' >> .cargo/config.toml
 
-RUN cargo build --release -j 1
+RUN cargo build --locked --release -j 1
 
 # =============================================================================
 # Runtime Stage
