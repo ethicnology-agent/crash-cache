@@ -10,23 +10,16 @@ def selected_reports():
     """Use report-owned metadata; the three text parameters default to All."""
     return """WITH normalized AS (
  SELECT r.id, r.timestamp, r.stacktrace_id,
- CASE WHEN EXISTS (SELECT 1 FROM report_tag t JOIN unwrap_tag_key k ON k.id=t.key_id
-                   WHERE t.report_id=r.id AND k.value='layer')
-      THEN coalesce((SELECT CASE WHEN v.value IN ('godot','flutter','rust','native') THEN v.value ELSE 'Other' END
-                     FROM report_tag t JOIN unwrap_tag_key k ON k.id=t.key_id
-                     JOIN unwrap_tag_value v ON v.id=t.value_id WHERE t.report_id=r.id AND k.value='layer'), 'Unclassified')
-      ELSE 'Unclassified' END AS layer,
- coalesce((SELECT CASE WHEN v.value IN ('runtime','diagnostics','networking','network','storage','shell','bridge','party','gameplay','creative')
-                      THEN v.value ELSE 'Other' END
-           FROM report_tag t JOIN unwrap_tag_key k ON k.id=t.key_id
-           JOIN unwrap_tag_value v ON v.id=t.value_id WHERE t.report_id=r.id AND k.value='component'), 'Unclassified') AS component,
+ coalesce(nullif((SELECT v.value FROM report_tag t
+           JOIN unwrap_tag_key k ON k.id=t.key_id JOIN unwrap_tag_value v ON v.id=t.value_id
+           WHERE t.report_id=r.id AND k.value='layer'), ''), p.value, 'Unclassified') AS layer,
+ coalesce(nullif((SELECT v.value FROM report_tag t
+           JOIN unwrap_tag_key k ON k.id=t.key_id JOIN unwrap_tag_value v ON v.id=t.value_id
+           WHERE t.report_id=r.id AND k.value='component'), ''), 'Unclassified') AS component,
  coalesce(p.value,'Unknown runtime') AS runtime,
  coalesce(a.value,'Unknown version') AS app_version,
  coalesce(m.value,'Unknown device') AS device_model,
- CASE WHEN e.value IN ('Exception','Error','StateError','ArgumentError','FlutterError','TypeError','RangeError',
-                      'RuntimeError','ValueError','Panic','panic','NativeCrash','SIGSEGV','SIGABRT','EXC_BAD_ACCESS',
-                      'GDScriptError','GodotError','Godot Error','Godot Warning') THEN e.value
-      WHEN e.value IS NULL THEN 'Unclassified' ELSE 'Other exception type' END AS exception_type
+ coalesce(e.value, 'Unclassified') AS exception_type
  FROM report r
  LEFT JOIN unwrap_platform p ON p.id=r.platform_id
  LEFT JOIN unwrap_app_version a ON a.id=r.app_version_id
@@ -56,9 +49,9 @@ def specifications():
         graph("Selected error reports by day", " SELECT to_char(to_timestamp(timestamp) AT TIME ZONE 'UTC','YYYY-MM-DD') AS day, count(*) AS reports FROM selected GROUP BY day ORDER BY day",
               "day", "Error report counts by UTC event date, filtered by their own capture layer, version and device. Counts are not population error rates; days with no reports are omitted.", (0, 0, 24, 7), "bar"),
         graph("Selected error components", " SELECT component, count(*) AS reports FROM selected GROUP BY component ORDER BY reports DESC, component",
-              "component", "Components declared on the selected error reports. Unknown component names collapse to Other; missing classification remains visible.", (7, 0, 12, 8)),
+              "component", "Components declared on the selected error reports. Custom component names are retained; missing classification remains visible.", (7, 0, 12, 8)),
         graph("Selected exception types", " SELECT exception_type, count(*) AS reports FROM selected GROUP BY exception_type ORDER BY reports DESC, exception_type",
-              "exception_type", "Known exception classes and native signals. Other types are grouped rather than displaying unrestricted exception metadata. Exception messages are excluded.", (7, 12, 12, 8)),
+              "exception_type", "Exception class names and native signals from any SDK. Exception messages are excluded.", (7, 12, 12, 8)),
         {"name": "Selected report summaries", "description": "Latest 200 matching reports, using each report's own metadata. No event IDs, messages, source, variables or breadcrumb content are exposed. Similar-looking rows may represent separate reports. Missing evidence is not a proof that capture is unsupported.",
          "query": prefix + """ SELECT to_char(to_timestamp(r.timestamp) AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS') AS event_time_utc,
  r.layer, r.component, r.runtime, r.app_version, r.device_model, r.exception_type,

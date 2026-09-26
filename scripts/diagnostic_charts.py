@@ -14,11 +14,11 @@ def specifications():
     prefix = f"WITH selected AS ({ERRORS})"
     breadcrumb_coverage = prefix + """, evidence AS (
     SELECT r.id,
-      coalesce((SELECT CASE WHEN tv.value IN ('godot','flutter','rust','native')
-                      THEN tv.value ELSE 'Other' END
+      coalesce(nullif((SELECT tv.value
                 FROM report_tag t JOIN unwrap_tag_key tk ON tk.id=t.key_id
                 JOIN unwrap_tag_value tv ON tv.id=t.value_id
-                WHERE t.report_id=r.id AND tk.value='layer'), 'Unclassified') AS layer,
+                WHERE t.report_id=r.id AND tk.value='layer'), ''),
+               (SELECT p.value FROM unwrap_platform p WHERE p.id=r.platform_id), 'Unclassified') AS layer,
       EXISTS (SELECT 1 FROM report_breadcrumb b WHERE b.report_id=r.id) AS has_breadcrumbs
     FROM selected r
 )
@@ -26,8 +26,7 @@ SELECT layer, count(*) FILTER (WHERE has_breadcrumbs) AS with_breadcrumbs,
        count(*) FILTER (WHERE NOT has_breadcrumbs) AS without_breadcrumbs
 FROM evidence GROUP BY layer ORDER BY layer"""
     categories = prefix + """, categorized AS (
-    SELECT r.id, CASE WHEN c.value IN ('navigation','ui','touch','http','console','log','error','app.lifecycle')
-                     THEN c.value WHEN c.value IS NULL THEN 'Unclassified' ELSE 'Other' END AS category
+    SELECT r.id, coalesce(c.value, 'Unclassified') AS category
     FROM selected r JOIN report_breadcrumb rb ON rb.report_id=r.id
     JOIN unwrap_breadcrumb b ON b.id=rb.breadcrumb_id
     LEFT JOIN unwrap_breadcrumb_category c ON c.id=b.category_id
@@ -65,8 +64,7 @@ GROUP BY metric.label ORDER BY metric.label"""
 )
 SELECT status, count(*) AS reports FROM outcomes GROUP BY status ORDER BY status"""
     contexts = prefix + """, categorized AS (
-    SELECT r.id, CASE WHEN k.value IN ('symbolication','runtime','browser','gpu','trace','flutter','godot','app_diagnostics')
-                     THEN k.value ELSE 'Other custom context' END AS context_family
+    SELECT r.id, k.value AS context_family
     FROM selected r JOIN report_context c ON c.report_id=r.id
     JOIN unwrap_context_key k ON k.id=c.key_id
 )
@@ -87,13 +85,13 @@ FROM categorized GROUP BY context_family ORDER BY reports_with_context DESC, con
         card("Breadcrumb coverage by layer", breadcrumb_coverage, "layer", ["with_breadcrumbs", "without_breadcrumbs"],
              "Stored error reports with or without at least one breadcrumb. Missing evidence can reflect client support, configuration or capture timing.", (4, 0, 12, 8), [TEAL, CORAL]),
         card("Breadcrumb categories in reports", categories, "category", ["reports_with_category"],
-             "Distinct reports containing each category; repeated and shared breadcrumbs do not multiply reports. Categories overlap and cannot be summed. Unrecognized categories are grouped as Other.", (4, 12, 12, 8), [BLUE]),
+             "Distinct reports containing each category; repeated and shared breadcrumbs do not multiply reports. Categories overlap and cannot be summed. Custom category names are retained.", (4, 12, 12, 8), [BLUE]),
         card("Stack diagnostic evidence", frames, "evidence", ["present", "absent"],
              "Presence of stored frame objects, function names, source context and nonempty variable objects per error report. Evidence categories overlap; presence does not establish stack accuracy or completeness.", (12, 0, 12, 9), [TEAL, CORAL]),
         card("Native symbolication outcomes", symbolication, "status", ["reports"],
              "Backend-recorded symbolication status. Not recorded includes ordinary managed errors and is not a failed symbolication. Complete refers to the processed stack, not every frame in the crashed process.", (12, 12, 12, 9), [PURPLE]),
         card("Stored custom context families", contexts, "context_family", ["reports_with_context"],
-             "Distinct error reports per stored custom context family. Built-in device, OS and app fields are normalized elsewhere. Unknown names collapse into one bucket; values are never displayed. Families overlap.", (21, 0, 24, 8), [BLUE]),
+             "Distinct error reports per stored custom context family. Built-in device, OS and app fields are normalized elsewhere. Custom family names are retained; values are never displayed. Families overlap.", (21, 0, 24, 8), [BLUE]),
     ]
 
 
@@ -120,7 +118,7 @@ def pipeline_specifications():
            AND ((m.filename='screenshot.png' AND m.content_type='image/png')
                 OR (m.filename IN ('screenshot.jpg','screenshot.jpeg') AND m.content_type='image/jpeg')) THEN 'Screenshot'
       WHEN (m.attachment_type='event.attachment' OR m.attachment_type IS NULL)
-           AND m.filename='godot.log' THEN 'Game log'
+           AND m.filename='godot.log' THEN 'Application log'
       WHEN m.attachment_type='event.attachment' THEN 'Attachment'
       WHEN m.attachment_type IS NULL THEN 'Unspecified' ELSE 'Other' END AS attachment_type
  FROM attachment_metadata m JOIN received a ON a.hash=m.archive_hash AND a.project_id=m.project_id
@@ -155,7 +153,7 @@ def pipeline_specifications():
  FROM logs GROUP BY day ORDER BY day""", "day", ["trace", "debug", "info", "warn", "error", "fatal", "other"],
               "Stored log records per UTC day and severity, using reported event time. Boundary days are clipped to the selected range. Days without stored logs are absent, not proof of inactivity.", (4, 12, 12, 8), "bar"),
         graph("Received attachment types", attachments + " SELECT attachment_type, count(*) AS attachments FROM attachments GROUP BY attachment_type ORDER BY attachments DESC, attachment_type",
-              "attachment_type", ["attachments"], "Attachment metadata from archives received in the selected dates, including unattached items. Counts refer to archived items, not unique content. Screenshot classification requires the known screenshot filename and matching image MIME type; Game log identifies godot.log. These metadata labels do not prove valid content.", (12, 0, 12, 8)),
+              "attachment_type", ["attachments"], "Attachment metadata from archives received in the selected dates, including unattached items. Counts refer to archived items, not unique content. Screenshot classification requires the known screenshot filename and matching image MIME type; Application log identifies godot.log. These metadata labels do not prove valid content.", (12, 0, 12, 8)),
         {**graph("Received attachment size (KiB)", attachments + " SELECT attachment_type, round(sum(size_bytes) / 1024.0, 3) AS payload_kib FROM attachments GROUP BY attachment_type ORDER BY payload_kib DESC, attachment_type",
               "attachment_type", ["payload_kib"], "Original attachment payload size in KiB (1 KiB = 1,024 bytes), rounded to three decimals. Excludes envelope and database overhead; this is not compressed disk usage. Raw filenames and content are not displayed.", (12, 12, 12, 8)), "previous_name": "Received attachment bytes"},
         graph("Error reports with attachment metadata", f"WITH selected AS ({ERRORS}), evidence AS (" + """

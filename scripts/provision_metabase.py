@@ -28,6 +28,16 @@ CARD_NAMES = (
 )
 
 
+def observation_note(text):
+    if os.environ.get("OBSERVABILITY_LABORATORY") == "1":
+        return "### Laboratory observations\n**Controlled test data, not production.** " + text
+    return "### Observability\n" + text
+
+
+def managed_note(text):
+    return text.startswith(("### Laboratory observations", "### Observability"))
+
+
 class ProvisionError(Exception):
     pass
 
@@ -199,11 +209,11 @@ def provision(api, project_id, start, end, grain="day", *, dashboard_name=DASHBO
     current = api.call("GET", f"/dashboard/{dashboard['id']}")
     existing = {item["card_id"]: item["id"] for item in current.get("dashcards", []) if item.get("card_id")}
     note_id = next((item["id"] for item in current.get("dashcards", [])
-                    if item.get("card_id") is None and item.get("visualization_settings", {}).get("text", "").startswith("### Laboratory observations")), -100)
+                    if item.get("card_id") is None and managed_note(item.get("visualization_settings", {}).get("text", ""))), -100)
     dashcards = [{"id": note_id, "card_id": None, "row": 0, "col": 0, "size_x": 24, "size_y": 3,
                   "series": [], "parameter_mappings": [], "visualization_settings": {
                       "virtual_card": {"name": None, "display": "text", "visualization_settings": {}},
-                      "text": note or "### Laboratory observations\nReal-device tests and synthetic load. **Not production player counts.** Activity requires foreground observations. Times UTC."}}]
+                      "text": note or observation_note("Activity requires optional foreground observations. Counts describe recorded identities, not people. Times UTC.")}}]
     for index, card_id in enumerate(card_ids):
         row, col, width, height = definitions[index]["layout"]
         dashcards.append({"id": existing.get(card_id, -(index + 1)), "card_id": card_id,
@@ -228,7 +238,7 @@ def provision(api, project_id, start, end, grain="day", *, dashboard_name=DASHBO
     if not any("{{grain}}" in definition["query"] for definition in definitions):
         parameters = [parameter for parameter in parameters if parameter["id"] != "grain"]
     api.call("PUT", f"/dashboard/{dashboard['id']}", {"parameters": parameters, "dashcards": dashcards,
-        "description": MARKER + " Laboratory data: controlled errors and crashes. Counts describe recorded installations and sessions, not a production player population."})
+        "description": MARKER + " Project-scoped diagnostic evidence and recorded sessions. Optional observations are not supplied automatically by SDKs."})
     return dashboard["id"], card_ids
 
 
@@ -247,19 +257,19 @@ def main():
         extra = {} if view == "overview" else {
             "dashboard_name": "Diagnostic context and evidence",
             "definitions_override": diagnostic_specifications(),
-            "note": "### Laboratory observations\n**Diagnostic evidence received.** Error reports only. Aggregates exclude raw content. Times UTC.",
+            "note": observation_note("**Diagnostic evidence received.** Error reports only. Aggregates exclude raw content. Times UTC."),
         }
         if view == "pipeline":
             extra = {
                 "dashboard_name": "Collection, logs and attachments",
                 "definitions_override": pipeline_specifications(),
-                "note": "### Laboratory observations\nStored logs and attachment metadata. **Queues show their current state**, filtered by archive receipt dates. Counts include controlled tests. Times UTC.",
+                "note": observation_note("Stored logs and attachment metadata. **Queues show their current state**, filtered by archive receipt dates. Times UTC."),
             }
         if view == "details":
             extra = {
                 "dashboard_name": "Error investigation",
                 "definitions_override": detail_specifications(),
-                "note": "### Laboratory observations\nSelected errors and their available context. Filters apply to each report. **All** clears a category selection. Times UTC.",
+                "note": observation_note("Selected errors and their available context. Filters apply to each report. **All** clears a category selection. Times UTC."),
             }
         if view == "tables":
             extra = {
@@ -269,7 +279,7 @@ def main():
                      "query": query, "display": "table", "settings": {}, "layout": (index * 7, 0, 24, 7)}
                     for index, (name, query) in enumerate(zip(CARD_NAMES, load_queries()))
                 ],
-                "note": "### Laboratory observations\nTechnical breakdowns supporting the overview. Click an app version or device to investigate its errors. Times UTC.",
+                "note": observation_note("Technical breakdowns supporting the overview. Click an app version or device to investigate its errors. Times UTC."),
             }
         dashboard_id, cards = provision(api, project_id, start, end, os.environ.get("OBSERVABILITY_GRAIN", "day"), **extra)
         print(json.dumps({"dashboard_id": dashboard_id, "card_ids": cards,

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Wire explicitly shared laboratory dashboards using Metabase 0.63.18 click URLs."""
+"""Wire explicitly shared project dashboards using Metabase 0.63.18 click URLs."""
 import json
 import os
 from urllib.parse import urlsplit
 
-from provision_metabase import Api, COLLECTION, MARKER, ProvisionError, required, rows, unique_managed
+from provision_metabase import Api, COLLECTION, MARKER, ProvisionError, required, rows, unique_managed, observation_note, managed_note
 
 VIEWS = {
     "overview": "Application health and installations",
@@ -45,10 +45,10 @@ def configure(api, base=""):
             visual = dict(tile.get("visualization_settings") or {})
             card = tile.get("card") or {}
             name = card.get("name", "")
-            if tile.get("card_id") is None and visual.get("text", "").startswith("### Laboratory observations"):
-                visual["text"] = ("### Laboratory observations\n" + menu + "\n\n"
-                    + ("Tap an error layer or device bar to investigate. **Test data, not production.** Times UTC." if key == "overview"
-                       else "Selected laboratory data. Missing evidence is not proof of health. **All** clears detail filters. Times UTC."))
+            if tile.get("card_id") is None and managed_note(visual.get("text", "")):
+                visual["text"] = observation_note(menu + "\n\n"
+                    + ("Tap an error layer or device bar to investigate. Times UTC." if key == "overview"
+                       else "Selected project data. Missing evidence is not proof of health. **All** clears detail filters. Times UTC."))
                 tile["size_y"] = 4
             elif name in ("Error reports by capture layer", "Breadcrumb coverage by layer"):
                 visual["click_behavior"] = {"type": "link", "linkType": "url", "linkTemplate": drill_url(destinations["details"], "layer")}
@@ -67,13 +67,13 @@ def configure(api, base=""):
             tiles.append({**{name: tile[name] for name in ("id", "card_id", "col", "size_x", "size_y", "parameter_mappings")},
                           "row": row, "series": [], "visualization_settings": visual})
         api.call("PUT", f"/dashboard/{dashboard['id']}", {"dashcards": tiles,
-            "description": MARKER + " Shared laboratory summaries and filtered investigation. Navigation enabled."})
+            "description": MARKER + " Shared project summaries and filtered investigation. Navigation enabled."})
     return destinations
 
 
 def main():
     if os.environ.get("METABASE_ENABLE_PUBLIC_NAVIGATION") != "1":
-        raise ProvisionError("Set METABASE_ENABLE_PUBLIC_NAVIGATION=1 to explicitly publish these laboratory dashboards")
+        raise ProvisionError("Set METABASE_ENABLE_PUBLIC_NAVIGATION=1 to explicitly publish these project dashboards")
     api = Api(required("METABASE_URL"))
     api.session = api.call("POST", "/session", {"username": required("METABASE_ADMIN_EMAIL"), "password": required("METABASE_ADMIN_PASSWORD")})["id"]
     try:

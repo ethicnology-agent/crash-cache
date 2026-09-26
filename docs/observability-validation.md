@@ -158,3 +158,12 @@ The dashboard layout now separates five views: Overview (8 questions), Diagnosti
 A real browser click on the Pixel 6a device bar opened the investigation dashboard with the selected device, project and date range. Detail filters cover capture layer, application version and device model. The shared investigation contains bounded metadata summaries, not raw error messages, variables or source contents. Custom public URL navigation is intentional because unauthenticated Metabase dashboards do not provide the full authenticated drill-through experience. Section navigation uses each destination's default period; only the configured chart drill-through carries the selected period and project.
 
 Public rendering was inspected at desktop and 412-pixel mobile widths; the tested layouts stacked without document-level horizontal overflow. These are laboratory views over injected test data, not production activity. Active installation counts are not identifiable people, session-owner differences remain documented, and the charts do not establish complete Sentry protocol parity or healthy collection when evidence is absent.
+
+
+## Generic dashboard classification
+
+The dashboard follow-up removed application-specific allowlists for layer/component names, exception classes, breadcrumb categories and custom context names. Error-layer classification now falls back to standard event platform metadata when a custom layer tag is absent or empty. A read-only PostgreSQL fixture with a Python report and no layer tag failed before this change and passed afterward. Existing detail, diagnostic and collection fixture contracts passed with arbitrary custom classification names preserved. This is a SQL compatibility proof, not a new real Python SDK receipt test.
+
+Generic project notes are the default; laboratory labeling is an explicit deployment option. Optional foreground observations and shared occurrence IDs remain documented client contracts rather than being presented as standard automatic SDK output. Previously recorded public-view metadata-bucketing behavior is superseded: classification names now remain visible across SDKs, while raw diagnostic values remain excluded.
+
+Validation of this follow-up passed 19 Python tests and 34 read-only PostgreSQL query contracts. All 32 managed questions also executed against the laboratory source after reprovisioning; navigation was reapplied to the five existing views with explicit laboratory labeling. No new application build or physical-device test was needed for these dashboard-only changes.

@@ -7,7 +7,7 @@ import unittest
 from diagnostic_charts import pipeline_specifications, specifications
 
 
-FIXTURES = """report(id,project_id,timestamp,issue_id,stacktrace_id) AS (
+FIXTURES = """raw_report(id,project_id,timestamp,issue_id,stacktrace_id) AS (
  VALUES (1,1,extract(epoch FROM timestamptz '2026-09-26 00:00Z'),1,1),
         (2,1,extract(epoch FROM timestamptz '2026-09-26 23:59Z'),2,2),
         (3,1,extract(epoch FROM timestamptz '2026-09-26 12:00Z'),3,NULL),
@@ -16,18 +16,18 @@ FIXTURES = """report(id,project_id,timestamp,issue_id,stacktrace_id) AS (
         (6,1,extract(epoch FROM timestamptz '2026-09-26 12:00Z'),NULL,1),
         (7,1,extract(epoch FROM timestamptz '2026-09-25 23:59Z'),7,1),
         (8,1,extract(epoch FROM timestamptz '2026-09-26 12:00Z'),8,3)
-), unwrap_stacktrace(id,frames) AS (
+), report AS (SELECT *, NULL::int AS platform_id FROM raw_report), unwrap_platform(id,value) AS (VALUES (1,'python')), unwrap_stacktrace(id,frames) AS (
  VALUES (1,'[{"function":"sample","context_line":"private source","vars":{"secret":"private value"}}, {"function":"sample"}]'::jsonb),
         (2,'[{"function":null,"context_line":"","pre_context":[],"vars":{}}]'::jsonb),
         (3,'null'::jsonb)
 ), unwrap_tag_key(id,value) AS (VALUES (1,'layer')),
-unwrap_tag_value(id,value) AS (VALUES (1,'godot'),(2,'private arbitrary layer')),
+unwrap_tag_value(id,value) AS (VALUES (1,'godot'),(2,'worker')),
 report_tag(report_id,key_id,value_id) AS (VALUES (1,1,1),(2,1,1),(3,1,2)),
-unwrap_breadcrumb_category(id,value) AS (VALUES (1,'navigation'),(2,'private arbitrary category')),
+unwrap_breadcrumb_category(id,value) AS (VALUES (1,'navigation'),(2,'db.query')),
 unwrap_breadcrumb(id,category_id) AS (VALUES (1,1),(2,1),(3,2),(4,NULL)),
 report_breadcrumb(report_id,seq,breadcrumb_id) AS (
  VALUES (1,0,1),(1,1,2),(1,2,3),(2,0,1),(2,1,4),(4,0,1),(5,0,1),(6,0,1),(7,0,1)
-), unwrap_context_key(id,value) AS (VALUES (1,'symbolication'),(2,'private context a'),(3,'private context b')),
+), unwrap_context_key(id,value) AS (VALUES (1,'symbolication'),(2,'queue'),(3,'job')),
 unwrap_context_value(id,value) AS (VALUES (1,'{"status":"partial","resolved_frames":1}'),(2,'{"private":"value"}')),
 report_context(report_id,key_id,value_id) AS (
  VALUES (1,1,1),(1,2,2),(1,3,2),(2,2,2),(4,1,1),(5,1,1),(6,1,1),(7,1,1)
@@ -36,18 +36,19 @@ report_context(report_id,key_id,value_id) AS (
 
 EXPECTED = [
     [{"error_reports": 4}],
-    [{"layer": "Other", "with_breadcrumbs": 0, "without_breadcrumbs": 1},
+    [{"layer": "worker", "with_breadcrumbs": 0, "without_breadcrumbs": 1},
      {"layer": "Unclassified", "with_breadcrumbs": 0, "without_breadcrumbs": 1},
      {"layer": "godot", "with_breadcrumbs": 2, "without_breadcrumbs": 0}],
     [{"category": "navigation", "reports_with_category": 2},
-     {"category": "Other", "reports_with_category": 1},
+     {"category": "db.query", "reports_with_category": 1},
      {"category": "Unclassified", "reports_with_category": 1}],
     [{"evidence": "Named function", "present": 1, "absent": 3},
      {"evidence": "Source context", "present": 1, "absent": 3},
      {"evidence": "Stack frames", "present": 2, "absent": 2},
      {"evidence": "Variables", "present": 1, "absent": 3}],
     [{"status": "Not recorded", "reports": 3}, {"status": "partial", "reports": 1}],
-    [{"context_family": "Other custom context", "reports_with_context": 2},
+    [{"context_family": "queue", "reports_with_context": 2},
+     {"context_family": "job", "reports_with_context": 1},
      {"context_family": "symbolication", "reports_with_context": 1}],
 ]
 
@@ -134,11 +135,11 @@ PIPELINE_EXPECTED = [
  [{"day":"2026-09-26","trace":0,"debug":0,"info":2,"warn":0,"error":1,"fatal":0,"other":1}],
  [{"attachment_type":"Attachment","attachments":2},{"attachment_type":"View hierarchy","attachments":1},
   {"attachment_type":"Unspecified","attachments":1},{"attachment_type":"Other","attachments":1},
-  {"attachment_type":"Screenshot","attachments":3},{"attachment_type":"Game log","attachments":1},
+  {"attachment_type":"Screenshot","attachments":3},{"attachment_type":"Application log","attachments":1},
   {"attachment_type":"Native crash dump","attachments":1},{"attachment_type":"Apple crash report","attachments":1}],
  [{"attachment_type":"Attachment","payload_kib":0.293},{"attachment_type":"View hierarchy","payload_kib":0.049},
   {"attachment_type":"Unspecified","payload_kib":0.010},{"attachment_type":"Other","payload_kib":0.005},
-  {"attachment_type":"Screenshot","payload_kib":3.5},{"attachment_type":"Game log","payload_kib":4},
+  {"attachment_type":"Screenshot","payload_kib":3.5},{"attachment_type":"Application log","payload_kib":4},
   {"attachment_type":"Native crash dump","payload_kib":8},{"attachment_type":"Apple crash report","payload_kib":10}],
  [{"coverage":"With metadata","reports":3},{"coverage":"Without metadata","reports":2}],
 ]

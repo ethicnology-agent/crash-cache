@@ -106,10 +106,11 @@ GROUP BY platform.value, os.value, version.value, model.value, app.value, build.
 ORDER BY observed_installations DESC;
 
 -- Error occurrences by the runtime and feature that captured them.
-SELECT layer.value AS layer, component.value AS component,
+SELECT coalesce(nullif(layer.value, ''), platform.value, 'Unclassified') AS layer, component.value AS component,
        count(*) AS error_events, count(DISTINCT r.issue_id) AS issues,
        count(DISTINCT r.user_id) AS affected_installations
 FROM report r
+LEFT JOIN unwrap_platform platform ON platform.id = r.platform_id
 LEFT JOIN LATERAL (
     SELECT tv.value FROM report_tag t
     JOIN unwrap_tag_key tk ON tk.id = t.key_id
@@ -125,7 +126,7 @@ LEFT JOIN LATERAL (
 WHERE r.project_id = :project_id AND r.issue_id IS NOT NULL
   AND to_timestamp(r.timestamp) >= :'from'::timestamptz
   AND to_timestamp(r.timestamp) < :'until'::timestamptz
-GROUP BY layer.value, component.value
+GROUP BY coalesce(nullif(layer.value, ''), platform.value, 'Unclassified'), component.value
 ORDER BY error_events DESC;
 
 -- A propagated failure has one occurrence ID and one capture owner. Multiple event IDs

@@ -24,13 +24,13 @@ Sessions do not support arbitrary device or OS attributes. Send one standard Sen
   "timestamp": "2026-09-26T10:00:00Z",
   "level": "info",
   "message": "app.session.started",
-  "release": "game@1.0.0",
+  "release": "application@1.0.0",
   "environment": "test",
   "user": {"id": "random-installation-id"},
   "tags": {
     "event_kind": "app_session",
     "app_session_id": "7c7b6585-f901-4351-bf8d-02711b721929",
-    "layer": "flutter",
+    "layer": "client",
     "component": "application"
   },
   "contexts": {
@@ -45,13 +45,15 @@ Keep the same `event_id` when retrying this observation. The session tag may use
 
 ## Foreground activity observations
 
-To measure active installations beyond session starts, the application owner may send the same standard information event with `event_kind=app_activity` and message `app.foreground.active`. Emit one observation on foreground resume and at intervals no greater than 60 seconds while the application is foregrounded. The same owner covers both renderers: Flutter hidden during a Godot round does not mean that the application is backgrounded. Stop the periodic observation when the application actually leaves the foreground. Include the current session UUID, installation identity and technical contexts exactly as for the start observation, without position, map content, invitation, network or input data.
+To measure active installations beyond session starts, the application owner may send the same standard information event with `event_kind=app_activity` and message `app.foreground.active`. Emit one observation on foreground resume and at intervals no greater than 60 seconds while the application is foregrounded. For applications embedding multiple renderers or SDKs, one owner covers the whole process; hiding an embedded view does not imply that the application is backgrounded. Stop the periodic observation when the application actually leaves the foreground. Include the current session UUID, installation identity and technical contexts exactly as for the start observation, without position, map content, invitation, network or input data.
 
 Generate one event UUID when creating each observation and preserve that UUID across offline retries. An offline queue must retain the original observation timestamp, not replace it with upload time. A missed observation is missing evidence, not proof of inactivity. This heartbeat contract is a client integration requirement; the SQL and backend alone do not implement its timer or lifecycle ownership. Verify actual event cadence and background cessation on devices before describing the population metric as measured.
 
 The activity query counts distinct installations with either a start or foreground observation within each UTC calendar period. It counts an installation only once per period even if it emits many observations, opens multiple sessions or changes device dimensions. A short foreground visit spanning a UTC day boundary can still miss the next day when no observation occurs after midnight; the cadence bounds observation spacing during continued foreground operation but does not yield exact playtime or concurrency. Do not infer a full minute of activity from each event.
 
 ## Dashboards
+
+The [generic Metabase guide](metabase.md) distinguishes standard SDK evidence from optional client observations and explains configuration for different applications.
 
 [The read-only SQL queries](sql/observability.sql) cover session starts and observed foreground installations by UTC day, ISO week and month; release health and ended-session durations; observed technical dimensions; errors by layer/component; and potential duplicate captures of the same logical error. Run them with `psql` and an operator-supplied project ID and half-open time range as shown in the file. For Metabase, replace the psql variables with typed dashboard parameters and run each SELECT as a separate question. Partial weeks and months at the range boundaries remain partial.
 

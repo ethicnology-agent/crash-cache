@@ -19,9 +19,9 @@ FIXTURES = """report(id,project_id,timestamp,issue_id,stacktrace_id,platform_id,
 ), unwrap_platform(id,value) AS (VALUES (1,'native'),(2,'dart')),
 unwrap_app_version(id,value) AS (VALUES (1,'1.0'),(2,'2.0')),
 unwrap_model(id,value) AS (VALUES (1,'Test phone'),(2,'Other phone')),
-unwrap_exception_type(id,value) AS (VALUES (1,'SIGSEGV'),(2,'Panic'),(3,'private arbitrary value')),
+unwrap_exception_type(id,value) AS (VALUES (1,'SIGSEGV'),(2,'Panic'),(3,'custom.category')),
 unwrap_tag_key(id,value) AS (VALUES (1,'layer'),(2,'component'),(3,'irrelevant')),
-unwrap_tag_value(id,value) AS (VALUES (1,'godot'),(2,'rust'),(3,'flutter'),(4,'runtime'),(5,'storage'),(6,'private arbitrary value')),
+unwrap_tag_value(id,value) AS (VALUES (1,'godot'),(2,'rust'),(3,'flutter'),(4,'runtime'),(5,'storage'),(6,'custom.category')),
 report_tag(report_id,key_id,value_id) AS (
  VALUES (1,1,1),(1,2,4),(1,3,6),(2,1,2),(2,2,5),(3,1,3),(3,2,6),
  (5,1,1),(6,1,1),(7,1,1),(8,1,1)
@@ -31,7 +31,7 @@ unwrap_stacktrace(id,frames) AS (VALUES (1,'[{"function":"private"}]'::jsonb),(2
 
 SUMMARY_ROWS = [
  {"event_time_utc":"2026-09-26 04:00:00","layer":"Unclassified","component":"Unclassified","runtime":"Unknown runtime","app_version":"Unknown version","device_model":"Unknown device","exception_type":"Unclassified","has_breadcrumbs":False,"has_frames":False},
- {"event_time_utc":"2026-09-26 03:00:00","layer":"flutter","component":"Other","runtime":"dart","app_version":"1.0","device_model":"Other phone","exception_type":"Other exception type","has_breadcrumbs":True,"has_frames":False},
+ {"event_time_utc":"2026-09-26 03:00:00","layer":"flutter","component":"custom.category","runtime":"dart","app_version":"1.0","device_model":"Other phone","exception_type":"custom.category","has_breadcrumbs":True,"has_frames":False},
  {"event_time_utc":"2026-09-26 02:00:00","layer":"rust","component":"storage","runtime":"native","app_version":"2.0","device_model":"Test phone","exception_type":"Panic","has_breadcrumbs":False,"has_frames":False},
  {"event_time_utc":"2026-09-26 01:00:00","layer":"godot","component":"runtime","runtime":"native","app_version":"1.0","device_model":"Test phone","exception_type":"SIGSEGV","has_breadcrumbs":True,"has_frames":True},
 ]
@@ -41,8 +41,8 @@ def counting_sql():
     specs = specifications()
     cases = [
         ("all_timeline", 0, {}, [{"day":"2026-09-26","reports":4}]),
-        ("all_components", 1, {}, [{"component":c,"reports":1} for c in ("Other","Unclassified","runtime","storage")]),
-        ("all_types", 2, {}, [{"exception_type":e,"reports":1} for e in ("Other exception type","Panic","SIGSEGV","Unclassified")]),
+        ("all_components", 1, {}, [{"component":c,"reports":1} for c in ("custom.category","Unclassified","runtime","storage")]),
+        ("all_types", 2, {}, [{"exception_type":e,"reports":1} for e in ("custom.category","Panic","SIGSEGV","Unclassified")]),
         ("all_summaries", 3, {}, SUMMARY_ROWS),
         ("layer_drill", 3, {"layer":"godot"}, [SUMMARY_ROWS[3]]),
         ("version_drill", 0, {"app_version":"1.0"}, [{"day":"2026-09-26","reports":2}]),
@@ -78,7 +78,7 @@ class DetailContracts(unittest.TestCase):
 
     def test_public_metadata_buckets_are_explicit(self):
         query = specifications()[0]["query"]
-        self.assertIn("Other exception type", query)
+        self.assertIn("coalesce(e.value", query)
         self.assertIn("Unknown device", query)
         self.assertIn("Unknown version", query)
         self.assertNotIn("JOIN session", query)
