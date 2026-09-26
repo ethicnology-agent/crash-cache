@@ -11,6 +11,8 @@ import urllib.error
 import urllib.request
 import uuid
 
+from dashboard_charts import specifications
+
 MARKER = "Managed by crash-cache observability provisioning."
 COLLECTION = "Crash-cache observability"
 DASHBOARD = "Application health and installations"
@@ -152,11 +154,18 @@ def provision(api, project_id, start, end):
         collection = api.call("POST", "/collection", {"name": COLLECTION, "description": MARKER})
     collection_id = collection["id"]
     cards = rows(api.call("GET", "/card"))
+    queries = load_queries()
+    definitions = specifications(queries) + [
+        {"name": name, "description": "Detailed verification table.", "query": query,
+         "display": "table", "settings": {}, "layout": (26 + index * 6, 0, 24, 6)}
+        for index, (name, query) in enumerate(zip(CARD_NAMES, queries))
+    ]
     card_ids = []
-    for name, query in zip(CARD_NAMES, load_queries()):
+    for definition in definitions:
+        name, query = definition["name"], definition["query"]
         card = unique_managed(cards, name, collection_id)
-        body = {"name": name, "description": MARKER, "collection_id": collection_id,
-                "display": "table", "visualization_settings": {},
+        body = {"name": name, "description": MARKER + " " + definition["description"], "collection_id": collection_id,
+                "display": definition["display"], "visualization_settings": definition["settings"],
                 "dataset_query": {"database": database["id"], "type": "native",
                                   "native": {"query": query, "template-tags": template_tags(project_id, start, end)}}}
         card = api.call("PUT", f"/card/{card['id']}", body) if card else api.call("POST", "/card", body)
@@ -169,10 +178,16 @@ def provision(api, project_id, start, end):
         dashboard = api.call("POST", "/dashboard", {"name": DASHBOARD, "description": MARKER, "collection_id": collection_id})
     current = api.call("GET", f"/dashboard/{dashboard['id']}")
     existing = {item["card_id"]: item["id"] for item in current.get("dashcards", []) if item.get("card_id")}
-    dashcards = []
+    note_id = next((item["id"] for item in current.get("dashcards", [])
+                    if item.get("card_id") is None and item.get("visualization_settings", {}).get("text", "").startswith("### Laboratory observations")), -100)
+    dashcards = [{"id": note_id, "card_id": None, "row": 0, "col": 0, "size_x": 24, "size_y": 3,
+                  "series": [], "parameter_mappings": [], "visualization_settings": {
+                      "virtual_card": {"name": None, "display": "text", "visualization_settings": {}},
+                      "text": "### Laboratory observations\nControlled errors and crashes on real test devices. **Not production player counts.** All times UTC."}}]
     for index, card_id in enumerate(card_ids):
+        row, col, width, height = definitions[index]["layout"]
         dashcards.append({"id": existing.get(card_id, -(index + 1)), "card_id": card_id,
-                          "row": index * 6, "col": 0, "size_x": 24, "size_y": 6,
+                          "row": row + 3, "col": col, "size_x": width, "size_y": height,
                           "visualization_settings": {}, "series": [],
                           "parameter_mappings": [
                               {"parameter_id": name, "card_id": card_id,
@@ -183,7 +198,8 @@ def provision(api, project_id, start, end):
         {"id": "from", "name": "From (inclusive)", "slug": "from", "type": "date/single", "default": start},
         {"id": "until", "name": "Until (exclusive)", "slug": "until", "type": "date/single", "default": end},
     ]
-    api.call("PUT", f"/dashboard/{dashboard['id']}", {"parameters": parameters, "dashcards": dashcards})
+    api.call("PUT", f"/dashboard/{dashboard['id']}", {"parameters": parameters, "dashcards": dashcards,
+        "description": MARKER + " Laboratory data: controlled errors and crashes. Counts describe recorded installations and sessions, not a production player population."})
     return dashboard["id"], card_ids
 
 
