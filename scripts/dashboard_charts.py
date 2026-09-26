@@ -7,10 +7,40 @@ PURPLE = "#8B6BB1"
 AMBER = "#E9B44C"
 
 
+GRAINS = ("hour", "day", "week", "month")
+
+
+def period_query(query, metric):
+    """Recompute distinct counts from observations for the selected calendar period."""
+    source = query.replace("('day'), ('week'), ('month')",
+                           "(CASE WHEN {{grain}} IN ('hour', 'day', 'week', 'month') THEN {{grain}} ELSE NULL END)")
+    # A single-day hourly view uses compact ticks; the date remains in its filter.
+    # Longer ranges retain the date to prevent ambiguous repeated hour labels.
+    return f"""WITH source AS ({source})
+SELECT CASE WHEN {{{{grain}}}} = 'hour' AND {{{{until}}}}::date - {{{{from}}}}::date = 1
+            THEN to_char(period_start, 'HH24:MI') || ' UTC'
+            ELSE to_char(period_start, 'YYYY-MM-DD HH24:MI') || ' UTC' END AS period_start,
+       {metric}
+FROM source WHERE grain IS NOT NULL ORDER BY source.period_start"""
+
+
+def device_query(query):
+    """Count identity before dropping app/runtime/OS-version dimensions."""
+    observation = query[:query.index("SELECT platform.value AS runtime_platform")]
+    return observation + """SELECT concat(coalesce(model.value, 'Unknown device'), ' / ',
+       coalesce(os.value, 'Unknown OS')) AS device,
+       coalesce(model.value, 'Unknown device') AS device_model,
+       count(DISTINCT u.value) AS observed_installations
+FROM observation r
+JOIN unwrap_user u ON u.id = r.user_id
+LEFT JOIN unwrap_os_name os ON os.id = r.os_name_id
+LEFT JOIN unwrap_model model ON model.id = r.model_id
+GROUP BY model.value, os.value
+ORDER BY observed_installations DESC, device"""
+
+
 def specifications(queries):
     sessions, activity, health, devices, errors, _duplicates = queries
-    hourly_sessions = sessions.replace("('day'), ('week'), ('month')", "('hour')")
-    hourly_activity = activity.replace("('day'), ('week'), ('month')", "('hour')")
 
     def wrap(query, select):
         return f"WITH source AS ({query}) {select}"
@@ -33,19 +63,19 @@ def specifications(queries):
         {"name": "Reported crashed sessions", "description": "Sessions explicitly classified crashed. Open or missing terminal sessions are not proof of health.",
          "query": wrap(health, "SELECT coalesce(sum(crashes), 0) AS crashed_sessions FROM source"),
          "display": "scalar", "settings": {"scalar.field": "crashed_sessions", "scalar.decimals": 0}, "layout": (0, 16, 8, 4)},
-        {"name": "Activity through the day", "description": "Distinct installations observed per UTC hour. No observation does not establish that nobody played.",
-         "query": hourly_activity, "display": "line",
-         "settings": graph("period_start", ["observed_active_installations"], [TEAL], **{"graph.show_dots": True, "graph.x_axis.title_text": "UTC hour", "graph.y_axis.title_text": "Observed installations", "line.interpolate": "linear"}), "layout": (4, 0, 12, 7)},
-        {"name": "Session starts through the day", "description": "Recorded session starts per UTC hour, including controlled laboratory sessions.",
-         "query": hourly_sessions, "display": "bar",
-         "settings": graph("period_start", ["sessions_started"], [BLUE], **{"graph.x_axis.title_text": "UTC hour", "graph.y_axis.title_text": "Sessions"}), "layout": (4, 12, 12, 7)},
+        {"name": "Observed activity by period", "previous_name": "Activity through the day", "description": "Distinct installations per selected UTC calendar period, recomputed from activity rather than summed daily counts. Partial boundary periods contain only the selected date range. Missing observations do not prove inactivity.",
+         "query": period_query(activity, "observed_active_installations"), "display": "line",
+         "settings": graph("period_start", ["observed_active_installations"], [TEAL], **{"graph.show_dots": True, "graph.x_axis.title_text": "Period start (UTC)", "graph.y_axis.title_text": "Observed installations", "line.interpolate": "linear", "graph.x_axis.scale": "ordinal"}), "layout": (4, 0, 12, 7)},
+        {"name": "Session starts by period", "previous_name": "Session starts through the day", "description": "Session starts per selected UTC calendar period, including synthetic laboratory sessions. Boundary periods are clipped to the date range.",
+         "query": period_query(sessions, "sessions_started"), "display": "bar",
+         "settings": graph("period_start", ["sessions_started"], [BLUE], **{"graph.x_axis.title_text": "Period start (UTC)", "graph.y_axis.title_text": "Sessions", "graph.x_axis.scale": "ordinal"}), "layout": (4, 12, 12, 7)},
         {"name": "Session outcomes by release", "description": "Recorded outcomes; open and abnormal sessions remain visible instead of being called healthy.",
          "query": wrap(health, "SELECT concat(regexp_replace(split_part(release, '+', 1), '^.*@', ''), ' / ', environment) AS build, sum(sessions - crashes - abnormal - unhandled - still_open) AS exited, sum(crashes) AS crashes, sum(abnormal) AS abnormal, sum(unhandled) AS unhandled, sum(still_open) AS still_open FROM source GROUP BY build ORDER BY build"),
          "display": "bar", "settings": graph("build", ["exited", "crashes", "abnormal", "unhandled", "still_open"], [TEAL, CORAL, AMBER, PURPLE, BLUE], **{"stackable.stack_type": "stacked", "graph.x_axis.title_text": "Release / environment", "graph.y_axis.title_text": "Sessions", "graph.label_value_formatting": "compact"}), "layout": (11, 0, 12, 8)},
         {"name": "Error reports by capture layer", "description": "Report volume, not an error rate. Controlled error storms intentionally affect these counts.",
          "query": wrap(errors, "SELECT coalesce(layer, 'Unclassified') AS layer, sum(error_events) AS reports FROM source GROUP BY layer ORDER BY reports DESC"),
          "display": "bar", "settings": graph("layer", ["reports"], [CORAL], **{"graph.show_values": True, "graph.x_axis.title_text": "Capture layer", "graph.y_axis.title_text": "Reports"}), "layout": (11, 12, 12, 8)},
-        {"name": "Observed devices and systems", "description": "Installations per device, system and app version; one installation can appear under multiple versions. Only foreground activity observations contribute.",
-         "query": wrap(devices, "SELECT concat(coalesce(device_model, 'Unknown device'), ' / ', coalesce(os, 'Unknown OS'), ' ', coalesce(os_version, '?'), ' / app ', coalesce(app_version, '?'), ' (', coalesce(app_build, '?'), ') / ', coalesce(runtime_platform, '?')) AS device, observed_installations FROM source ORDER BY observed_installations DESC"),
+        {"name": "Observed devices and systems", "description": "Distinct installations per device model and OS across the selected range. App, OS-version and runtime changes do not multiply the count. A changed model or OS name can put one installation in multiple bars; do not sum bars. The detail table retains versions.",
+         "query": device_query(devices),
          "display": "row", "settings": graph("device", ["observed_installations"], [PURPLE], **{"graph.show_values": True}), "layout": (19, 0, 24, 7)},
     ]

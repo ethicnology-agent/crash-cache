@@ -11,7 +11,9 @@ import urllib.error
 import urllib.request
 import uuid
 
-from dashboard_charts import specifications
+from dashboard_charts import GRAINS, specifications
+from diagnostic_charts import pipeline_specifications, specifications as diagnostic_specifications
+from detail_charts import FILTERS as DETAIL_FILTERS, specifications as detail_specifications
 
 MARKER = "Managed by crash-cache observability provisioning."
 COLLECTION = "Crash-cache observability"
@@ -91,25 +93,32 @@ def load_queries():
             .replace(":'until'", "{{until}}") for query in queries]
 
 
-def template_tags(project_id, start, end):
+def template_tags(project_id, start, end, grain=None, detail_filters=()):
     definitions = (("project_id", "Project", "number", project_id),
                    ("from", "From (inclusive)", "date", start),
                    ("until", "Until (exclusive)", "date", end))
+    if grain is not None:
+        definitions += (("grain", "Chart period (UTC)", "text", grain),)
+    definitions += tuple((name, name.replace("_", " ").title(), "text", "All") for name in detail_filters)
     return {name: {"id": str(uuid.uuid5(uuid.NAMESPACE_URL, "crash-cache:" + name)),
                    "name": name, "display-name": label, "type": kind,
                    "required": True, "default": default}
             for name, label, kind, default in definitions}
 
 
-def query_parameters(project_id, start, end):
+def query_parameters(project_id, start, end, grain=None, detail_filters=()):
+    definitions = (("project_id", "number", project_id), ("from", "date/single", start), ("until", "date/single", end))
+    if grain is not None:
+        definitions += (("grain", "category", grain),)
+    definitions += tuple((name, "category", "All") for name in detail_filters)
     return [{"id": str(uuid.uuid5(uuid.NAMESPACE_URL, "crash-cache:" + name)),
              "type": kind, "target": ["variable", ["template-tag", name]], "value": value}
-            for name, kind, value in (("project_id", "number", project_id),
-                                      ("from", "date/single", start),
-                                      ("until", "date/single", end))]
+            for name, kind, value in definitions]
 
 
-def provision(api, project_id, start, end):
+def provision(api, project_id, start, end, grain="day", *, dashboard_name=DASHBOARD, definitions_override=None, note=None):
+    if grain not in GRAINS:
+        raise ProvisionError("Chart period must be hour, day, week or month")
     email, password = required("METABASE_ADMIN_EMAIL"), required("METABASE_ADMIN_PASSWORD")
     properties = api.call("GET", "/session/properties")
     setup_token = properties.get("setup-token")
@@ -155,27 +164,38 @@ def provision(api, project_id, start, end):
     collection_id = collection["id"]
     cards = rows(api.call("GET", "/card"))
     queries = load_queries()
-    definitions = specifications(queries) + [
-        {"name": name, "description": "Detailed verification table.", "query": query,
-         "display": "table", "settings": {}, "layout": (26 + index * 6, 0, 24, 6)}
-        for index, (name, query) in enumerate(zip(CARD_NAMES, queries))
-    ]
+    definitions = specifications(queries)
+    if definitions_override is not None:
+        definitions = definitions_override
     card_ids = []
     for definition in definitions:
         name, query = definition["name"], definition["query"]
         card = unique_managed(cards, name, collection_id)
+        if card is None and definition.get("previous_name"):
+            card = unique_managed(cards, definition["previous_name"], collection_id)
+        chart_grain = grain if "{{grain}}" in query else None
+        detail_filters = tuple(name for name in DETAIL_FILTERS if "{{" + name + "}}" in query)
         body = {"name": name, "description": MARKER + " " + definition["description"], "collection_id": collection_id,
                 "display": definition["display"], "visualization_settings": definition["settings"],
                 "dataset_query": {"database": database["id"], "type": "native",
-                                  "native": {"query": query, "template-tags": template_tags(project_id, start, end)}}}
+                                  "native": {"query": query, "template-tags": template_tags(project_id, start, end, chart_grain, detail_filters)}}}
         card = api.call("PUT", f"/card/{card['id']}", body) if card else api.call("POST", "/card", body)
-        result = api.call("POST", f"/card/{card['id']}/query", {"parameters": query_parameters(project_id, start, end)})
+        result = api.call("POST", f"/card/{card['id']}/query", {"parameters": query_parameters(project_id, start, end, chart_grain, detail_filters)})
         if result.get("status") != "completed":
             raise ProvisionError(f"Question execution failed: {name}")
+        if definition["display"] == "table":
+            settings = dict(definition["settings"])
+            columns = dict(settings.get("column_settings", {}))
+            for column in result.get("data", {}).get("cols", []):
+                field = column["name"]
+                title = field.replace("_", " ").capitalize().replace(" utc", " UTC")
+                columns[json.dumps(["name", field], separators=(",", ":"))] = {"column_title": title}
+            settings["column_settings"] = columns
+            api.call("PUT", f"/card/{card['id']}", {"visualization_settings": settings})
         card_ids.append(card["id"])
-    dashboard = unique_managed(rows(api.call("GET", "/dashboard")), DASHBOARD, collection_id)
+    dashboard = unique_managed(rows(api.call("GET", "/dashboard")), dashboard_name, collection_id)
     if not dashboard:
-        dashboard = api.call("POST", "/dashboard", {"name": DASHBOARD, "description": MARKER, "collection_id": collection_id})
+        dashboard = api.call("POST", "/dashboard", {"name": dashboard_name, "description": MARKER, "collection_id": collection_id})
     current = api.call("GET", f"/dashboard/{dashboard['id']}")
     existing = {item["card_id"]: item["id"] for item in current.get("dashcards", []) if item.get("card_id")}
     note_id = next((item["id"] for item in current.get("dashcards", [])
@@ -183,7 +203,7 @@ def provision(api, project_id, start, end):
     dashcards = [{"id": note_id, "card_id": None, "row": 0, "col": 0, "size_x": 24, "size_y": 3,
                   "series": [], "parameter_mappings": [], "visualization_settings": {
                       "virtual_card": {"name": None, "display": "text", "visualization_settings": {}},
-                      "text": "### Laboratory observations\nControlled errors and crashes on real test devices. **Not production player counts.** All times UTC."}}]
+                      "text": note or "### Laboratory observations\nReal-device tests and synthetic load. **Not production player counts.** Activity requires foreground observations. Times UTC."}}]
     for index, card_id in enumerate(card_ids):
         row, col, width, height = definitions[index]["layout"]
         dashcards.append({"id": existing.get(card_id, -(index + 1)), "card_id": card_id,
@@ -192,12 +212,21 @@ def provision(api, project_id, start, end):
                           "parameter_mappings": [
                               {"parameter_id": name, "card_id": card_id,
                                "target": ["variable", ["template-tag", name]]}
-                              for name in ("project_id", "from", "until")]})
+                              for name in ("project_id", "from", "until", "grain", *DETAIL_FILTERS) if "{{" + name + "}}" in definitions[index]["query"]]})
     parameters = [
         {"id": "project_id", "name": "Project", "slug": "project", "type": "number/=", "default": [project_id]},
         {"id": "from", "name": "From (inclusive)", "slug": "from", "type": "date/single", "default": start},
         {"id": "until", "name": "Until (exclusive)", "slug": "until", "type": "date/single", "default": end},
+        {"id": "grain", "name": "Chart period (UTC)", "slug": "grain", "type": "string/=", "default": [grain],
+         "required": True, "isMultiSelect": False, "values_source_type": "static-list",
+         "values_source_config": {"values": list(GRAINS)}},
     ]
+    for name in DETAIL_FILTERS:
+        if any("{{" + name + "}}" in definition["query"] for definition in definitions):
+            parameters.append({"id": name, "name": name.replace("_", " ").title(), "slug": name,
+                               "type": "string/=", "default": ["All"], "required": True, "isMultiSelect": False})
+    if not any("{{grain}}" in definition["query"] for definition in definitions):
+        parameters = [parameter for parameter in parameters if parameter["id"] != "grain"]
     api.call("PUT", f"/dashboard/{dashboard['id']}", {"parameters": parameters, "dashcards": dashcards,
         "description": MARKER + " Laboratory data: controlled errors and crashes. Counts describe recorded installations and sessions, not a production player population."})
     return dashboard["id"], card_ids
@@ -212,7 +241,37 @@ def main():
     if project_id <= 0 or dt.date.fromisoformat(start) >= dt.date.fromisoformat(end):
         raise ProvisionError("Provide a positive project and an increasing ISO date range")
     try:
-        dashboard_id, cards = provision(api, project_id, start, end)
+        view = os.environ.get("OBSERVABILITY_VIEW", "overview")
+        if view not in ("overview", "diagnostics", "pipeline", "details", "tables"):
+            raise ProvisionError("View must be overview, diagnostics, pipeline, details or tables")
+        extra = {} if view == "overview" else {
+            "dashboard_name": "Diagnostic context and evidence",
+            "definitions_override": diagnostic_specifications(),
+            "note": "### Laboratory observations\n**Diagnostic evidence received.** Error reports only. Aggregates exclude raw content. Times UTC.",
+        }
+        if view == "pipeline":
+            extra = {
+                "dashboard_name": "Collection, logs and attachments",
+                "definitions_override": pipeline_specifications(),
+                "note": "### Laboratory observations\nStored logs and attachment metadata. **Queues show their current state**, filtered by archive receipt dates. Counts include controlled tests. Times UTC.",
+            }
+        if view == "details":
+            extra = {
+                "dashboard_name": "Error investigation",
+                "definitions_override": detail_specifications(),
+                "note": "### Laboratory observations\nSelected errors and their available context. Filters apply to each report. **All** clears a category selection. Times UTC.",
+            }
+        if view == "tables":
+            extra = {
+                "dashboard_name": "Detailed verification tables",
+                "definitions_override": [
+                    {"name": name, "description": "Detailed verification table. Click a device or app version to investigate its errors.",
+                     "query": query, "display": "table", "settings": {}, "layout": (index * 7, 0, 24, 7)}
+                    for index, (name, query) in enumerate(zip(CARD_NAMES, load_queries()))
+                ],
+                "note": "### Laboratory observations\nTechnical breakdowns supporting the overview. Click an app version or device to investigate its errors. Times UTC.",
+            }
+        dashboard_id, cards = provision(api, project_id, start, end, os.environ.get("OBSERVABILITY_GRAIN", "day"), **extra)
         print(json.dumps({"dashboard_id": dashboard_id, "card_ids": cards,
                           "url": f"{api.base}/dashboard/{dashboard_id}"}))
     finally:
