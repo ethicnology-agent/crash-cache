@@ -13,10 +13,12 @@ class FakeApi:
         self.cards=[]
         self.dashboards=[]
         self.tables=[]
-        fields=('id','project_id','issue_key','source_issue_id','event_at','identity','title','platform','environment','app_version','device_model','report_id','log_id','session_id','latest_report_id','started_at','status','release','errors','duration','level','body','trace_id')
+        fields=('id','project_id','issue_key','source_issue_id','event_at','identity','title','platform','environment','app_version','device_model','report_id','log_id','session_id','latest_report_id','started_at','status','release','errors','duration','level','body','trace_id','name')
         for i,name in enumerate(TABLES,1):
             self.tables.append({'id':i,'name':name,'schema':'crash_cache_explorer',
                                 'fields':[{'id':i*100+j,'name':f} for j,f in enumerate(fields)]})
+
+        self.tables.append({'id':10,'name':'calendar','schema':'crash_cache_explorer','fields':[{'id':1000,'name':'day'}]})
 
     def call(self,method,path,body=None):
         self.calls.append((method,path,body))

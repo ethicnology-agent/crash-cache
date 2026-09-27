@@ -20,13 +20,13 @@ class ActivityProvisionTests(unittest.TestCase):
         first=provision(api,2,6,103,'2026-09-06','2026-09-26')
         second=provision(api,2,6,103,'2026-09-06','2026-09-26')
         self.assertEqual(first,second)
-        self.assertEqual(len(api.cards),15)
+        self.assertEqual(len(api.cards),19)
         self.assertEqual(len(api.dashboards),1)
         filters={p['id']:p for p in api.dashboards[0]['parameters']}
-        self.assertEqual(filters['until']['default'],'2026-09-27')
-        self.assertEqual(filters['grain']['values_source_config']['values'],['hour','day','week','month'])
+        self.assertEqual(filters['period']['default'],'2026-09-06~2026-09-26')
+        self.assertEqual(filters['grain']['values_source_config']['values'],[['hour','Hour'],['day','Day'],['week','Week'],['month','Month']])
         for tile in api.dashboards[0]['dashcards']:
-            self.assertEqual({p['parameter_id'] for p in tile['parameter_mappings']},{'project_id','from','until','grain'})
+            self.assertEqual({p['parameter_id'] for p in tile['parameter_mappings']},{'project_id','period','grain'})
         self.assertFalse(any('public_link' in path for _,path,_ in api.calls))
 
     def test_invalid_scope_refused_before_changes(self):

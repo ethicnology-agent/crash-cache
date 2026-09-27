@@ -82,7 +82,7 @@ def counting_sql():
 
 class InvestigationContracts(unittest.TestCase):
     def test_complete_view_set(self):
-        self.assertEqual([name for name, _ in definitions()], ['projects','reports','issues','frames','breadcrumbs','attachments','logs','report_logs','sessions'])
+        self.assertEqual([name for name, _ in definitions()], ['calendar','projects','reports','issues','frames','breadcrumbs','attachments','logs','report_logs','sessions'])
 
     def test_no_archive_or_dsn_read(self):
         for _, query in definitions():

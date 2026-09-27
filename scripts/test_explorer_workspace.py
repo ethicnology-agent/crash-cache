@@ -29,7 +29,7 @@ class LayoutTests(unittest.TestCase):
         card = next(tile for tile in body['dashcards'] if tile['card_id'] == 101)
         self.assertEqual(card['parameter_mappings'], before['dashcards'][0]['parameter_mappings'])
         self.assertEqual(card['visualization_settings'], before['dashcards'][0]['visualization_settings'])
-        self.assertEqual(card['row'], 4)
+        self.assertEqual(card['row'], 3)
         self.assertEqual(self.current, before)
         self.assertNotIn('parameters', body)
 
@@ -45,6 +45,22 @@ class LayoutTests(unittest.TestCase):
             if tile['id'] < 0:
                 tile['id'] = 900+index
         self.assertEqual(layout(first, self.sections, 'Navigation'), first)
+
+    def test_renamed_tabs_retain_ids_and_header_tiles(self):
+        aliases = {'Breadcrumbs & logs': 'Breadcrumbs', 'Attachments': 'Files',
+                   'Devices & versions': 'Devices', 'Collection quality': 'Quality'}
+        for old, new in aliases.items():
+            with self.subTest(tab=old):
+                current = copy.deepcopy(self.current)
+                current['tabs'] = [{'id': 51, 'name': old}, {'id': 52, 'name': 'Other'}]
+                current['dashcards'].append({'id': 99, 'card_id': None,
+                                            'dashboard_tab_id': 51})
+                sections = [(new, 'Details.', [(101,0,0,24,7)]),
+                            ('Other', 'More.', [(102,0,0,24,9)])]
+                body = layout(current, sections, 'Navigation')
+                self.assertEqual(body['tabs'][0], {'id': 51, 'name': new})
+                self.assertEqual(body['dashcards'][0]['id'], 99)
+                self.assertEqual(body['dashcards'][1]['dashboard_tab_id'], 51)
 
     def test_omitted_duplicated_and_unknown_cards_are_rejected(self):
         for sections in ([self.sections[0]], self.sections+[self.sections[0]],

@@ -108,8 +108,8 @@ def definitions(metadata, database_id):
         card('issue_activity','Problems to investigate','reports','table',{'filter':errors,
              'aggregation':[['count'],['distinct',f('identity')],['min',f('event_at')],['max',f('event_at')]],
              'breakout':[field(metadata,'issues','title',**{'source-field':metadata['reports']['fields']['issue_key']['id']}),f('issue_key')],
-             'order-by':[['desc',['aggregation',0]]]},'Counts and first/last times are recalculated after dashboard filters. Select an issue to inspect its lifetime record.'),
-        card('events','Event records','reports','table',{'filter':errors,'fields':[f(n) for n in ('id','event_at','title','issue_key','environment','app_version','platform','device_model','identity')], 'order-by':[['desc',f('event_at')],['desc',f('id')]],'limit':200},'Most recent 200 errors in scope. Select a message or event ID to open its stack trace. Open the question to change its limit.'),
+             'order-by':[['desc',['aggregation',1]],['desc',['aggregation',0]]]},'Counts and first/last times are recalculated after dashboard filters. Select an issue to inspect its lifetime record.'),
+        card('events','Event records','reports','table',{'filter':errors,'fields':[f(n) for n in ('title','event_at','app_version','platform','device_model','environment','id','identity','issue_key')], 'order-by':[['desc',f('event_at')],['desc',f('id')]],'limit':200},'Most recent 200 errors in scope. Select a message or event ID to open its stack trace. Open the question to change its limit.'),
         card('sessions','Session records','sessions','table',{'fields':[f(n,'sessions') for n in ('id','started_at','status','release','environment','identity','errors','duration')], 'order-by':[['desc',f('started_at','sessions')]],'limit':200},'Most recent SDK sessions; open and abnormal states remain explicit.'),
         card('session_status','Session status','sessions','bar',{'aggregation':[['count']],'breakout':[f('status','sessions')]},'Counts of recorded sessions by their latest reported status. This is not crash-free user coverage.'),
         card('logs','Log records','logs','table',{'fields':[f(n,'logs') for n in ('id','event_at','level','body','trace_id')], 'order-by':[['desc',f('event_at','logs')]],'limit':200},'Most recent 200 structured logs. Trace correlation requires an actual matching trace.'),
@@ -126,14 +126,15 @@ def definitions(metadata, database_id):
         if definition['key']=='issue_activity':
             settings['column_settings'] = {
                 json.dumps(['name',name],separators=(',',':')):{'column_title':title}
-                for name,title in [('issue_key','Issue'),('title','Problem'),('count','Events'),
-                                   ('count_2','Affected identities'),('min','First in period'),('max','Last in period')]}
+                for name,title in [('issue_key','Technical problem ID'),('title','Problem'),('count','Occurrences'),
+                                   ('count_2','Installations affected'),('min','First occurrence'),('max','Latest occurrence')]}
+            settings['table.columns'] = [{'name':name,'enabled':True} for name in ('title','count_2','count','max','min','issue_key')]
     return result
 
 
 def dashboard_parameters(project_id, start, end, dashboard_name=None):
     parameters = [{'id':'project','name':'Project','slug':'project','type':'number/=','default':[project_id]},
-            {'id':'period','name':'Period (UTC)','slug':'period','type':'date/range','default':f'{start}~{end}'},
+            {'id':'period','name':'Period (UTC)','slug':'period','type':'date/all-options','default':f'{start}~{end}'},
             {'id':'environment','name':'Environment','slug':'environment','type':'string/='},
             {'id':'version','name':'Version','slug':'version','type':'string/='}]
     if dashboard_name == 'Sessions and logs':
@@ -268,7 +269,12 @@ def main():
         from explorer_workspace import organize
         activity=provision_activity(api,args.database,result['collection_id'],args.project,result['start'],result['end'])
         result['activity']=activity
+        from provision_explorer_home import provision as provision_home, named_project_filters
+        result['home']=provision_home(api,result)
+        named_project_filters(api,result)
         result['workspace']=organize(api,result,activity)
+        from explorer_navigation import provision as provision_navigation
+        result['navigation']=provision_navigation(api,result)
         print(json.dumps(result))
     finally:
         if api.session:

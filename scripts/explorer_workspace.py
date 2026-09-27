@@ -9,6 +9,13 @@ import os
 
 from provision_metabase import ProvisionError
 
+TAB_ALIASES = {
+    'Breadcrumbs': ('Breadcrumbs & logs',),
+    'Files': ('Attachments',),
+    'Devices': ('Devices & versions',),
+    'Quality': ('Collection quality',),
+}
+
 
 def _tile(source, tab_id, row, col, width, height):
     keys = ('id', 'card_id', 'series', 'parameter_mappings', 'visualization_settings',
@@ -32,20 +39,23 @@ def layout(current, sections, navigation):
                  if not tile.get('card_id')}
     tabs, tiles = [], []
     for index, (name, note, entries) in enumerate(sections):
-        tab_id = old_tabs.get(name, -index-1)
+        tab_id = old_tabs.get(name)
+        if tab_id is None:
+            tab_id = next((old_tabs[alias] for alias in TAB_ALIASES.get(name, ())
+                           if alias in old_tabs), -index-1)
         tabs.append({'id': tab_id, 'name': name})
         old_note = old_notes.get(tab_id)
         if not old_note and index == 0:
             old_note = old_notes.get(None)
         tiles.append({'id': old_note['id'] if old_note else -1000-index,
                       'card_id': None, 'dashboard_tab_id': tab_id,
-                      'row': 0, 'col': 0, 'size_x': 24, 'size_y': 4,
+                      'row': 0, 'col': 0, 'size_x': 24, 'size_y': 3,
                       'series': [], 'parameter_mappings': [],
                       'visualization_settings': {
                           'virtual_card': {'name': None, 'display': 'text', 'visualization_settings': {}},
                           'text': navigation + '\n\n' + note}})
         for card_id, row, col, width, height in entries:
-            tiles.append(_tile(by_card[card_id], tab_id, row+4, col, width, height))
+            tiles.append(_tile(by_card[card_id], tab_id, row+3, col, width, height))
     return {'tabs': tabs, 'dashcards': tiles}
 
 
@@ -61,15 +71,13 @@ def organize(api, result, activity_result):
     dashboards, cards = result['dashboards'], result['cards']
     health = dashboards['Health overview']
     usage = activity_result['dashboard_id']
-    navigation = f'**[App usage](/dashboard/{usage}) · [Error reports](/dashboard/{health})**'
-    if os.environ.get('EXPLORER_DEMO') == '1':
-        navigation = '**Synthetic demo data.**\n\n' + navigation
+    navigation = '**Synthetic demo data.**' if os.environ.get('EXPLORER_DEMO') == '1' else ''
     tabs = {}
     tabs['reports'] = _apply(api, health, [
-        ('Overview', 'Start with error impact, then open **Problems** to choose an error and inspect its occurrences.', [
+        ('Overview', 'Error impact in this period. Open **Problems** to investigate.', [
             (cards['count'],0,0,8,4),(cards['issues_count'],0,8,8,4),(cards['identities'],0,16,8,4),
             (cards['trend'],4,0,16,8),(cards['platforms'],4,16,8,8)]),
-        ('Problems', f'Select a problem to open its occurrences; select an occurrence to read its stack trace. [Releases and devices](/dashboard/{dashboards["Releases and devices"]}) · [Sessions and logs](/dashboard/{dashboards["Sessions and logs"]})', [
+        ('Problems', f'Choose a problem, then an event to read its stack trace. [Releases and devices](/dashboard/{dashboards["Releases and devices"]}) · [Sessions and logs](/dashboard/{dashboards["Sessions and logs"]})', [
             (cards['issue_activity'],0,0,24,12)]),
     ], navigation)
     detail = result.get('details')
@@ -78,39 +86,42 @@ def organize(api, result, activity_result):
         if len(ids) != 6:
             raise ProvisionError('Event detail layout requires summary, stack, breadcrumbs, logs, attachments and metadata')
         tabs['event'] = _apply(api, detail['dashboard_id'], [
-            ('Stack trace', 'The selected event is shown below. Frames are captured evidence; an empty stack is explicitly reported.', [
+            ('Stack trace', 'This event and its captured stack trace.', [
                 (ids[0],0,0,24,5),(ids[1],5,0,24,10)]),
-            ('Breadcrumbs & logs', 'Breadcrumbs precede the event. Logs are linked only by an exact project and trace match.', [
+            ('Breadcrumbs', 'Captured breadcrumbs and logs with a matching trace.', [
                 (ids[2],0,0,24,9),(ids[3],9,0,24,8)]),
-            ('Attachments', 'Open retained files or view available image previews. Attachment access requires an administrator.', [
+            ('Files', 'Captured files and image previews. Administrator access required.', [
                 (ids[4],0,0,24,12)]),
-            ('Context', 'Device, release, identifiers, tags and original captured context for this exact occurrence.', [
+            ('Context', 'Device, release, tags and original context for this event.', [
                 (ids[5],0,0,24,12)]),
         ], navigation)
     a = activity_result['cards']
+    comparison = a.get('Activity compared with previous period')
+    comparison_tiles = [(comparison,22,0,24,5)] if comparison else []
+    quality_tiles = [(a['Collection health'],0,8,16,10)] if 'Collection health' in a else []
     tabs['usage'] = _apply(api, usage, [
-        ('Overview', 'Installation IDs approximate the audience, not store downloads. Choose day, week or month.', [
-            (a['Active installations in period'],0,0,8,4),
-            (a['First observed installations in period'],0,8,8,4),
-            (a['Sessions started in period'],0,16,8,4),
-            (a['Active installations over time'],4,0,12,8),
-            (a['Sessions started over time by system'],4,12,12,8),
-            (a['First observed installations over time'],12,0,24,7)]),
-        ('Platforms', 'Compare operating systems. Sessions use an exact app-session and installation match; unmatched sessions remain Unknown.', [
+        ('Overview', 'Installation IDs approximate players. First observed is not a store download. Choose day, week or month.', [
+            (a['Active installations in period'],3,0,8,4),
+            (a['First observed installations in period'],3,8,8,4),
+            (a['Sessions started in period'],3,16,8,4),
+            (a['Active installations over time'],7,0,12,8),
+            (a['Sessions started over time by system'],7,12,12,8),
+            (a['First observed installations over time'],15,0,24,7)] + comparison_tiles + ([(a['Collection status'],0,0,24,3)] if 'Collection status' in a else [])),
+        ('Platforms', 'Audience and sessions by operating system. Unmatched sessions stay Unknown.', [
             (a['Active installations by system'],0,0,12,8),
             (a['Sessions started by system'],0,12,12,8),
             (a['Active installations over time by system'],8,0,24,8)]),
-        ('Devices & versions', 'Distinct installations within each group. One installation can appear in several versions; do not sum these rows as unique players.', [
+        ('Devices', 'Installations by device and version. The same installation may appear in several groups.', [
             (a['Active installations by system version'],0,0,12,8),
             (a['Active installations by device model'],0,12,12,8),
             (a['Active installations by app version'],8,0,24,7)]),
-        ('Collection quality', 'Still open means no terminal update has been received. It does not count concurrent players. Missing identities and system matches expose collection gaps.', [
+        ('Quality', 'Open sessions have no terminal update; they are not concurrent players. Check missing IDs and system matches.', [
             (a['Started sessions still open'],0,0,8,4),
-            (a['Session outcomes by start period'],4,0,24,8),
-            (a['Activity collection coverage'],12,0,24,6)]),
+            (a['Session outcomes by start period'],10,0,24,8),
+            (a['Activity collection coverage'],18,0,24,6)] + quality_tiles),
     ], navigation)
     # Secondary dashboards keep their established layout and scopes, but share
-    # the same two primary destinations rather than a growing navigation list.
+    # the same primary destinations rather than a growing navigation list.
     for title, dashboard_id in dashboards.items():
         if dashboard_id == health:
             continue

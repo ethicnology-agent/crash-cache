@@ -15,6 +15,11 @@
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS crash_cache_explorer;
 
+-- A bounded date dimension supports relative/custom ranges even with no telemetry.
+CREATE OR REPLACE VIEW crash_cache_explorer.calendar AS
+SELECT date '2000-01-01' + n AS day
+FROM generate_series(0, date '2100-12-31' - date '2000-01-01') AS n;
+
 CREATE OR REPLACE VIEW crash_cache_explorer.projects AS
 SELECT id, name, created_at FROM public.project;
 

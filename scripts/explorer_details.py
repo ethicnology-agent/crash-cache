@@ -22,7 +22,7 @@ THEN jsonb_array_length(stack_frames)::text || ' captured frames'
 ELSE 'No stack trace received for this event' END AS "Stack trace"
 FROM crash_cache_explorer.reports WHERE {scope}''', 'object', (3, 0, 24, 5)),
         ('Stack trace', f'''SELECT position AS frame,function,
-concat_ws(':',filename,line_number) AS location,source_line AS source,variables
+concat_ws(':',filename,line_number) AS location,source_line AS source
 FROM crash_cache_explorer.frames WHERE {child_scope} ORDER BY position''', 'table', (8, 0, 24, 7)),
         ('Breadcrumb timeline', f'''SELECT chronology,event_at,category,type,level,message,data
 FROM crash_cache_explorer.breadcrumbs WHERE {child_scope} ORDER BY chronology''', 'table', (15, 0, 24, 7)),
@@ -112,10 +112,10 @@ def link_events(api, dashboard_id, event_card_id, detail_id):
         visual = dict(tile.get('visualization_settings') or {})
         if tile.get('card_id') == event_card_id:
             visual['click_behavior'] = {'type': 'link', 'linkType': 'url',
-                'linkTemplate': f'/dashboard/{detail_id}?project={{{{project}}}}&event={{{{id}}}}'}
+                'linkTemplate': f'/dashboard/{detail_id}?project={{{{project}}}}&event={{{{id}}}}&period={{{{period}}}}'}
             settings = dict(visual.get('column_settings') or {})
             settings['["name","id"]'] = {'column_title': 'Open event / stack trace', 'click_behavior': {'type': 'link', 'linkType': 'url',
-                'linkTemplate': f'/dashboard/{detail_id}?project={{{{project}}}}&event={{{{id}}}}'}}
+                'linkTemplate': f'/dashboard/{detail_id}?project={{{{project}}}}&event={{{{id}}}}&period={{{{period}}}}'}}
             visual['column_settings'] = settings
         tiles.append({**{key: tile[key] for key in ('id','card_id','row','col','size_x','size_y','parameter_mappings')},
                       'series': [], 'visualization_settings': visual})
