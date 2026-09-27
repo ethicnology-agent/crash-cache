@@ -32,12 +32,21 @@ def provision(api, result):
         for tile in current['dashcards']:
             if tile.get('card_id')==card['id']:continue
             tile={**tile}
-            # Provisioning supplies a fresh normal layout. Direct reruns retain positions.
-            if tile.get('dashboard_tab_id') not in old_navigation:tile['row']+=3
+            # Remove the previous navigation gap before choosing its new position.
+            previous=old_navigation.get(tile.get('dashboard_tab_id'))
+            if previous and tile['row']>=previous['row']+previous['size_y']:
+                tile['row']-=previous['size_y']
             tiles.append(tile)
+        hero_ids={result['cards'][key] for key in ('count','identities','issues_count')}
+        hero_ids.update(result['activity']['cards'][key] for key in ('Active installations in period','First observed installations in period','Sessions started in period','Collection status'))
         for index,tab_id in enumerate(tabs):
+            content=[t for t in tiles if t.get('dashboard_tab_id')==tab_id]
+            hero=[t for t in content if t.get('card_id') in hero_ids]
+            row=max((t['row']+t['size_y'] for t in hero or content),default=0)
+            for tile in content:
+                if tile['row']>=row:tile['row']+=3
             tiles.append({'id':old_navigation.get(tab_id,{}).get('id',-900-index),'card_id':card['id'],
-                          'row':0,'col':0,'size_x':24,'size_y':3,'dashboard_tab_id':tab_id,
+                          'row':row,'col':0,'size_x':24,'size_y':3,'dashboard_tab_id':tab_id,
                           'series':[],'parameter_mappings':[],'visualization_settings':settings})
         # Preserve chosen tab membership for the added per-tab navigation cards.
         navigation_tabs={t['id']:t.get('dashboard_tab_id') for t in tiles if t.get('card_id')==card['id']}

@@ -8,6 +8,19 @@ from test_explorer_tab_persistence import TabApi, provision_all
 
 
 class NavigationTests(unittest.TestCase):
+    def test_summary_figures_precede_navigation(self):
+        api=TabApi()
+        result,audience=provision_all(api)
+        result['activity']=audience
+        result['home']=home(api,result)
+        organize(api,result,audience)
+        nav=provision(api,result)
+        dashboard=api.call('GET',f"/dashboard/{result['home']['dashboard_id']}")
+        nav_tile=next(t for t in dashboard['dashcards'] if t.get('card_id')==nav['card_id'])
+        for card_id in (audience['cards']['Active installations in period'],result['cards']['count']):
+            figure=next(t for t in dashboard['dashcards'] if t.get('card_id')==card_id)
+            self.assertGreaterEqual(nav_tile['row'],figure['row']+figure['size_y'])
+
     def test_scope_links_and_tab_membership_survive_rerun(self):
         api=TabApi()
         result,audience=provision_all(api)

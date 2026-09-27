@@ -19,17 +19,17 @@ def provision(api, result):
     current=api.call('GET',f"/dashboard/{dashboard['id']}")
     old_tiles={t['card_id']:t['id'] for t in current.get('dashcards',[]) if t.get('card_id')}
     usage=audience['dashboard_id']; errors=result['dashboards']['Health overview']
-    prefix='**Synthetic demo data.**\n\n' if os.environ.get('EXPLORER_DEMO')=='1' else ''
-    note=prefix+'Choose a project and period. Installation IDs approximate audience; they are not store downloads.'
+    prefix='**Synthetic demo.** ' if os.environ.get('EXPLORER_DEMO')=='1' else ''
+    note=prefix+'Counts reflect received telemetry, not store downloads.'
     note_id=next((t['id'] for t in current.get('dashcards',[]) if not t.get('card_id')),-1000)
-    tiles=[{'id':note_id,'card_id':None,'row':0,'col':0,'size_x':24,'size_y':3,
+    tiles=[{'id':note_id,'card_id':None,'row':0,'col':0,'size_x':24,'size_y':2,
             'series':[],'parameter_mappings':[],'visualization_settings':{
                 'virtual_card':{'name':None,'display':'text','visualization_settings':{}},'text':note}}]
-    native=[(a['Collection status'],3,0,24,3),
-            (a['Active installations in period'],6,0,6,3),
-            (a['Sessions started in period'],6,6,6,3),
-            (a['Activity compared with previous period'],9,0,24,5),
-            (a['Collection health'],21,0,24,8)]
+    native=[(a['Collection status'],5,0,24,2),
+            (a['Active installations in period'],2,0,6,3),
+            (a['Sessions started in period'],2,12,6,3),
+            (a['Activity compared with previous period'],7,0,24,5),
+            (a['Collection health'],19,0,24,8)]
     for card_id,row,col,width,height in native:
         tiles.append({'id':old_tiles.get(card_id,-len(tiles)-1),'card_id':card_id,'row':row,'col':col,
                       'size_x':width,'size_y':height,'series':[],'visualization_settings':(
@@ -40,8 +40,8 @@ def provision(api, result):
                                             for key in ('project_id','period','grain')]})
     metadata=metadata_for(api,result['database_id'])
     specs={d['key']:d for d in definitions(metadata,result['database_id'])}
-    for key,row,col,width,height in [('count',6,12,6,3),('identities',6,18,6,3),
-                                     ('trend',14,0,14,7),('versions',14,14,10,7)]:
+    for key,row,col,width,height in [('count',2,6,6,3),('identities',2,18,6,3),
+                                     ('trend',12,0,14,7),('versions',12,14,10,7)]:
         card_id=c[key]
         scope=[m for m in mappings(metadata,specs[key],card_id) if m['parameter_id'] in ('project','period')]
         for m in scope:
