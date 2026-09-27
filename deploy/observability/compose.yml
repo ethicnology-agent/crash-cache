@@ -23,7 +23,7 @@ services:
 
   symbolicator:
     profiles: [observability]
-    image: getsentry/symbolicator:26.9.0
+    image: ghcr.io/getsentry/symbolicator:26.9.0
     restart: unless-stopped
     command: [run, --config, /etc/symbolicator/config.yml]
     depends_on:
@@ -68,7 +68,14 @@ services:
       MAX_CONCURRENT_COMPRESSIONS: 2
       WORKER_INTERVAL_SECS: 2
       WORKER_REPORTS_BATCH_SIZE: 20
-      METABASE_AUTH_URL: ${METABASE_AUTH_URL:-}
+      RATE_LIMIT_REQUESTS_PER_SEC: 300
+      RATE_LIMIT_PER_IP_PER_SEC: 20
+      RATE_LIMIT_PER_PROJECT_PER_SEC: 100
+      RATE_LIMIT_BURST_MULTIPLIER: 3
+      ANALYTICS_FLUSH_INTERVAL_SECS: 60
+      ANALYTICS_RETENTION_DAYS: 90
+      ANALYTICS_BUFFER_SIZE: 10000
+      METABASE_AUTH_URL: ${METABASE_AUTH_URL:-http://metabase:3000/api/user/current}
       SYMBOLICATOR_URL: http://symbolicator:3021
       SYMBOLICATOR_SOURCES_PATH: /etc/crash-cache/sources.json
     volumes:
@@ -97,7 +104,7 @@ services:
       MB_DB_USER: metabase_app
       MB_DB_PASS: ${METABASE_DB_PASSWORD}
       MB_DB_HOST: postgres
-      MB_SITE_URL: http://localhost:${METABASE_LAB_PORT:-3001}
+      MB_SITE_URL: ${METABASE_SITE_URL:-http://localhost:3002}
       JAVA_TOOL_OPTIONS: -Xmx1024m
       MB_REPORT_TIMEZONE: UTC
       MB_ANON_TRACKING_ENABLED: "false"
@@ -105,6 +112,23 @@ services:
       - 127.0.0.1:${METABASE_LAB_PORT:-3001}:3000
     mem_limit: 2g
     cpus: 1
+
+  dashboard-proxy:
+    profiles: [dashboards]
+    image: docker.io/library/caddy:2.11.4-alpine
+    restart: unless-stopped
+    depends_on:
+      metabase:
+        condition: service_started
+      crash-cache:
+        condition: service_healthy
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - 127.0.0.1:${METABASE_PROXY_PORT:-3002}:8080
+    read_only: true
+    mem_limit: 128m
+    cpus: 0.5
 
 volumes:
   postgres_data:

@@ -2,7 +2,7 @@
 
 The [generic dashboard guide](../../docs/metabase.md) describes reusable views for any supported Sentry client and their optional evidence requirements. The dashboard provisioner is not tied to this laboratory deployment.
 
-This opt-in Compose deployment isolates the compatibility laboratory from the existing root Compose stack. It runs PostgreSQL, crash-cache, Symbolicator and a private HTTP symbol source. The additional `dashboards` profile runs Metabase. Do not point it at an existing deployment's database volume. There are no fixed container names, so a distinct Compose project name isolates networks and volumes.
+This opt-in Compose deployment isolates the compatibility laboratory from the existing root Compose stack. It runs PostgreSQL, crash-cache, Symbolicator and a private HTTP symbol source. The additional `dashboards` profile runs Metabase and a Caddy proxy that serves dashboards and authenticated attachments from one origin. Do not point it at an existing deployment's database volume. There are no fixed container names, so a distinct Compose project name isolates networks and volumes.
 
 The definitions use the Compose specification and can be run with Docker Compose or `podman compose` with a compatible provider. Linux can run Podman directly; macOS needs an existing running Podman machine with sufficient memory and disk. Provisioning dashboards uses only Python 3's standard library and runs on both systems. Neither Compose syntax nor this script establishes that a particular host/runtime combination has been tested.
 
@@ -18,13 +18,21 @@ podman compose --env-file deploy/observability/.env \
   --profile observability up -d --build
 ```
 
-Add `--profile dashboards` before `up` to include Metabase. The Compose provider must support profiles, conditional `depends_on`, environment-variable requirements and resource limits. On an SELinux-enforcing Linux host, configure appropriate labels for these dedicated bind mounts; do not disable SELinux globally or relabel unrelated shared directories.
+Add `--profile dashboards` before `up` to include Metabase and its proxy. Set `METABASE_SITE_URL` to the browser-facing origin; its default is `http://localhost:3002`, matching `METABASE_PROXY_PORT=3002`. Use that proxy port for the browser and `METABASE_URL`, not the direct Metabase debugging port (`METABASE_LAB_PORT`, default 3001). The Compose provider must support profiles, conditional `depends_on`, environment-variable requirements and resource limits. On an SELinux-enforcing Linux host, configure appropriate labels for these dedicated bind mounts; do not disable SELinux globally or relabel unrelated shared directories.
 
 The ingestion endpoint and dashboard are published only on loopback. PostgreSQL, Symbolicator and the symbol HTTP server have no published host ports. Access a remote laboratory through a deliberate authenticated tunnel; do not expose an unauthenticated symbol server or dashboard setup endpoint publicly. Symbolicator allows private-address sources so it can reach the internal static server; source definitions are operator-owned, never supplied by events. This relaxes Symbolicator's destination restriction only within this trusted laboratory deployment: keep its API reachable exclusively by crash-cache on the private network and retain operator-only control of the sources file. Without `connect_to_reserved_ips: true`, a correct build-ID path can still fail with `destination is restricted`; that is a source-access failure, not proof of missing symbols. After correcting an access failure, account for cached download failures when repeating the verification.
 
 The database initialization script runs only on the first initialization of the dedicated volume. It creates a migration-capable application role, a separate Metabase application-database role and a SELECT-only analytics role with default privileges on future application tables. Changing passwords in `.env` does not rotate existing database roles. Rotate credentials deliberately rather than deleting the volume to make startup succeed.
 
-The configured memory ceilings total approximately 3.7 GiB without dashboards and 4.7 GiB with dashboards; these are limits, not measured usage or minimum host requirements. Build memory is separate. The application payload ceilings are laboratory settings suitable for native dump testing, not a proven production sizing recommendation.
+The configured memory ceilings total approximately 3.7 GiB without dashboards and 5.8 GiB with dashboards; these are limits, not measured usage or minimum host requirements. Build memory is separate. The application payload ceilings are laboratory settings suitable for native dump testing, not a proven production sizing recommendation.
+
+## Fresh containers and persistence
+
+No existing Metabase container, H2 file or manually configured proxy is required. PostgreSQL's `postgres_data` named volume holds two separate databases: crash-cache telemetry and Metabase accounts/questions/dashboards. The Metabase container is disposable; its application metadata uses `MB_DB_TYPE=postgres`. Keep the same project name, passwords and volume when replacing containers. The initialization SQL runs only on an empty volume; application migrations run at backend startup. A new, empty volume creates an empty installation, after which the provisioning steps below reconstruct the maintained workspace. It does not restore previous users, telemetry or manual changes.
+
+The Caddy configuration routes only `/api/evidence/attachments/*` to crash-cache and all other paths to Metabase, preserving session cookies and attachment paths. The backend's fixed internal authorization URL defaults to `http://metabase:3000/api/user/current`; binary evidence still requires an active Metabase administrator. No public sharing or authentication bypass is enabled. Caddy's admin API and request access log are disabled; reset links and session tokens must not enter access logs. This is an internal HTTP listener bound to host loopback, not automatic public TLS. Terminate external HTTPS or use an authenticated tunnel deliberately. Set the public origin consistently in `METABASE_SITE_URL` and `--evidence-origin`.
+
+For container replacement, run `down` without `--volumes`, then the same `up -d` command. Verify login, the same dashboard IDs, a controlled report and an authenticated attachment after replacement. Back up both databases separately; volume persistence is not a backup. Never use a different PostgreSQL major image against an existing data directory without its documented migration procedure.
 
 ## Create a project and configure client DSNs
 
@@ -92,6 +100,33 @@ The SQL runs inside a read-only transaction and shadows tables with synthetic CT
 
 The script targets Metabase **0.63.18**. It uses the [official API](https://www.metabase.com/docs/latest/api) and [native SQL parameters](https://www.metabase.com/docs/latest/questions/native-editor/sql-parameters). Dashboard creation uses `PUT /api/dashboard/:id` with `dashcards`, not the deprecated cards endpoint. The deployment owner must validate the script against the running pinned image and run it twice to verify idempotence; static checks alone are not deployment evidence.
 
+## Provision the complete authenticated Explorer
+
+The previous provisioner initializes the account and read-only source on a fresh Metabase instance. The current interactive workspace is provisioned separately; there is no manual dashboard editing prerequisite. After backend startup has completed its migrations, install the reporting views with the same Compose project/environment used above:
+
+```sh
+podman compose --env-file deploy/observability/.env \
+  -f deploy/observability/compose.yml -p crash-cache-observability \
+  --profile observability --profile dashboards exec -T postgres \
+  psql -U crash_cache -d crash_cache -v ON_ERROR_STOP=1 < docs/sql/investigation.sql
+podman compose --env-file deploy/observability/.env \
+  -f deploy/observability/compose.yml -p crash-cache-observability \
+  --profile observability --profile dashboards exec -T postgres \
+  psql -U crash_cache -d crash_cache -v ON_ERROR_STOP=1 \
+  -c 'GRANT USAGE ON SCHEMA crash_cache_explorer TO metabase_readonly; GRANT SELECT ON ALL TABLES IN SCHEMA crash_cache_explorer TO metabase_readonly;'
+```
+
+Run `python3 scripts/provision_metabase.py` with the private environment described above. In Metabase's Admin → Databases, select **Crash-cache read-only**, synchronize the schema, and note its database ID from the page URL. IDs are instance-specific: do not assume `2`. The API equivalent is `GET /api/database` to find the named source, then `POST /api/database/{id}/sync_schema`; wait until metadata includes all ten `crash_cache_explorer` views. Set `METABASE_DATABASE_ID` to that source ID and `CRASH_CACHE_PROJECT_ID` to the project you created. Then run:
+
+```sh
+python3 scripts/provision_explorer.py \
+  --database "$METABASE_DATABASE_ID" --project "$CRASH_CACHE_PROJECT_ID" \
+  --start 2026-09-01 --end 2026-09-30 \
+  --evidence-origin "$METABASE_URL"
+```
+
+Choose the desired inclusive UTC date range. `METABASE_URL` must be the absolute browser-facing proxy origin for image previews; use its reachable hostname rather than a container hostname. Open `/dashboard/{home.dashboard_id}` from the printed JSON. No event ID is required: select an occurrence to populate the detail view. Re-run the provisioner to verify stable object IDs. The [Explorer guide](../../docs/explorer.md) documents filtering, authorization and data semantics. Synthetic data is optional and must be inserted explicitly into a dedicated project; fresh deployments do not seed fabricated activity automatically.
+
 ## Diagnostic and collection dashboards
 
 Set `OBSERVABILITY_VIEW=diagnostics` and rerun the provisioner to create or update **Diagnostic context and evidence**. Its six cards show error-report counts, breadcrumb coverage and categories, frame/source/variable evidence, native symbolication outcomes and custom-context families. These queries count reports rather than multiplying rows from joined breadcrumbs, frames or contexts. Presence of source or variables is not proof that every frame was captured correctly. The first stored exception stack is the current database scope.
@@ -112,6 +147,6 @@ Attachment metadata is populated when envelopes are processed by the updated bac
 
 ## Versions and lifecycle
 
-Images are pinned to Symbolicator 26.9.0, PostgreSQL 18.6, Python 3.14.7 and Metabase 0.63.18. Patch tags are explicit but not immutable digests; record resolved image digests with runtime measurements. The existing Rust 1.93 builder is retained: reqwest 0.13.5 declares Rust 1.85 and the checked Linux dependency manifests do not require a version above 1.93. Host testing on another Rust version does not prove the container build. The Dockerfile now builds with `--locked` so deployment cannot silently resolve a different dependency set.
+Images are pinned to Symbolicator 26.9.0, PostgreSQL 18.6, Python 3.14.7, Metabase 0.63.18 and Caddy 2.11.4. Patch tags are explicit but not immutable digests; record resolved image digests with runtime measurements. The existing Rust 1.93 builder is retained: reqwest 0.13.5 declares Rust 1.85 and the checked Linux dependency manifests do not require a version above 1.93. Host testing on another Rust version does not prove the container build. The Dockerfile now builds with `--locked` so deployment cannot silently resolve a different dependency set.
 
 Stop the project with the same Compose file, environment, project name and profiles followed by `down`. Named volumes remain. Do not add `--volumes` unless intentionally deleting the laboratory's database and symbol cache. Keep database exports, raw envelopes, dumps, symbols and operational credentials outside Git. No lifecycle command here operates the separate existing root Compose deployment.
