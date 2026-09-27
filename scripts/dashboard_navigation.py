@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wire explicitly shared project dashboards using Metabase 0.63.18 click URLs."""
+"""Wire explicitly shared project dashboards using Metabase 0.63.18.2 click URLs."""
 import json
 import os
 from urllib.parse import urlsplit

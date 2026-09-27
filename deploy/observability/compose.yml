@@ -92,7 +92,7 @@ services:
 
   metabase:
     profiles: [dashboards]
-    image: docker.io/metabase/metabase:v0.63.18
+    image: docker.io/metabase/metabase:v0.63.18.2
     restart: unless-stopped
     depends_on:
       postgres:

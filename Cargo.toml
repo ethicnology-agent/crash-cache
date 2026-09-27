@@ -24,7 +24,7 @@ diesel = { version = "2.3", default-features = false, features = ["postgres", "r
 diesel_migrations = "2.3"
 
 # Bundle libpq and openssl to avoid system dependency issues
-pq-sys = { version = "0.6", features = ["bundled"] }
+pq-sys = { version = "0.7", features = ["bundled"] }
 openssl-sys = { version = "0.9.100", features = ["vendored"] }
 
 serde = { version = "1", features = ["derive"] }

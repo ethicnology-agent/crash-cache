@@ -2,7 +2,7 @@
 
 Crash-cache stores Sentry-compatible reports; Metabase reads their PostgreSQL representation. A `report` or `issue` table is a storage interface, not the HTTP API expected by another error tracker's frontend. Metabase does not need that external API: its query builder can read related reporting views directly. The optional evidence endpoint described below supplies attachment bytes that SQL metadata alone cannot display.
 
-The integration targets Metabase OSS **0.63.18**. The supplied profile budgets 2 GiB for the container with a 1 GiB Java heap, leaving room for native allocations and query processing; size larger deployments from their own workload. It uses authenticated questions, database metadata, relationships, detail views and dashboard links. It does not require a Python application backend, a custom dashboard application, an embedded analytics subscription or an API compatible with the Sentry web frontend. Crash-cache remains the Rust ingestion service; the Python scripts are operator provisioning and test tools.
+The integration targets Metabase OSS **0.63.18.2**. The supplied profile budgets 2 GiB for the container with a 1 GiB Java heap, leaving room for native allocations and query processing; size larger deployments from their own workload. It uses authenticated questions, database metadata, relationships, detail views and dashboard links. It does not require a Python application backend, a custom dashboard application, an embedded analytics subscription or an API compatible with the Sentry web frontend. Crash-cache remains the Rust ingestion service; the Python scripts are operator provisioning and test tools.
 
 ## Investigation workflow
 
@@ -43,7 +43,7 @@ Primary navigation carries project and period, and switching tabs retains the fi
 
 ## Version and upgrade decision
 
-On September 26, 2026, the latest stable release was **0.63.18**, already installed in the validation environment; **0.64.0-beta** was a prerelease. No upgrade was performed or required for these dashboards. The implementation uses native tabs, line/bar charts, tables, detail cards and explicit click destinations. Custom visualization plugins in the current documentation require Pro/Enterprise; they are not an OSS dependency of this workspace.
+The initial dashboard measurements used **0.63.18**. The deployment now pins **0.63.18.2**, the stable hotfix image verified on September 27, 2026; **0.64.0-beta** remains a prerelease. The hotfixes correct row charts with remapped columns and custom action visibility in embedded editable dashboards; they do not introduce a new dashboard layout. The implementation uses native tabs, line/bar charts, tables, detail cards and explicit click destinations. Custom visualization plugins in the current documentation require Pro/Enterprise; they are not an OSS dependency of this workspace.
 
 For a later upgrade, read the release notes and official upgrade guide for the target version, back up the **Metabase application database** separately from the crash-cache telemetry database, pin the image version, stop the old instance, and let the new instance migrate its metadata. Test login, query/filter mappings, tabs, click destinations and evidence access before accepting it. A rollback restores the pre-upgrade application database with its matching image; do not run an older image against already-migrated metadata. Use a persistent PostgreSQL application database for a maintained deployment. An H2 database in a disposable container is a laboratory setup, not production persistence.
 

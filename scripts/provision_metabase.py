@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision the maintained observability collection using Metabase 0.63.18 APIs."""
+"""Provision the maintained observability collection using Metabase 0.63.18.2 APIs."""
 
 import datetime as dt
 import json

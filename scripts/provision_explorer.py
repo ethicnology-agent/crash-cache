@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision authenticated query-builder investigation on Metabase 0.63.18.
+"""Provision authenticated query-builder investigation on Metabase 0.63.18.2.
 
 Views must already be installed and database metadata synchronized. The supplied
 API may already be authenticated; this module never creates users or publishes
