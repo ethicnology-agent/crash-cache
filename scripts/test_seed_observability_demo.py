@@ -61,6 +61,54 @@ class DemoTests(unittest.TestCase):
                 self.assertFalse(values[1]["init"])
                 self.assertGreater(values[1]["duration"], 0)
 
+    def test_v1_replay_bytes_remain_unchanged(self):
+        _, manifest = generate(dt.date(2026, 9, 6), seed="demo-v1")
+        self.assertEqual(manifest["sha256"], "5830d5cce2909ab9ea7a66d09497c919c3d963b43c43070a1abe0d4c546191ce")
+        self.assertEqual(manifest["payload_bytes"], 1776064)
+
+    def test_v2_events_include_exact_session_identity(self):
+        envelopes, manifest = generate(dt.date(2026, 9, 6), days=1)
+        self.assertEqual(manifest["seed"], "demo-v2")
+        sessions = {}
+        events = []
+        for body in envelopes:
+            for metadata, value in unpack(body)[1]:
+                if metadata["type"] == "session":
+                    sessions[value["sid"]] = value["did"]
+                elif metadata["type"] == "event":
+                    events.append(value)
+        for value in events:
+            self.assertEqual(sessions[value["tags"]["app_session_id"]], value["user"]["id"])
+
+    def test_supplement_only_adds_deterministic_session_context_events(self):
+        start = dt.date(2026, 9, 6)
+        original, original_manifest = generate(start, seed="demo-v1")
+        supplemental, manifest = generate(start, seed="demo-v1", session_context_only=True)
+        self.assertEqual((supplemental, manifest), generate(start, seed="demo-v1", session_context_only=True))
+        sessions, event_ids, contexts = {}, set(), {}
+        for body in original:
+            for metadata, value in unpack(body)[1]:
+                if metadata["type"] == "session":
+                    sessions[value["sid"]] = (value["did"], value["started"])
+                elif metadata["type"] == "event":
+                    event_ids.add(value["event_id"])
+                    contexts[(value["user"]["id"], value["timestamp"])] = (value["platform"], value["contexts"]["os"])
+        self.assertEqual(len(supplemental), original_manifest["counts"]["sessions"])
+        self.assertEqual(manifest["counts"], {"activity_events": 875, "events": 875, "session_context_events": 875})
+        new_ids = set()
+        for body in supplemental:
+            _, items = unpack(body)
+            self.assertEqual(len(items), 1)
+            metadata, value = items[0]
+            self.assertEqual(metadata["type"], "event")
+            self.assertEqual(value["level"], "info")
+            self.assertNotIn("exception", value)
+            self.assertEqual(value["tags"]["event_kind"], "app_session")
+            self.assertNotIn(value["event_id"], event_ids | new_ids)
+            new_ids.add(value["event_id"])
+            self.assertEqual(sessions[value["tags"]["app_session_id"]], (value["user"]["id"], value["timestamp"]))
+            self.assertEqual(contexts[(value["user"]["id"], value["timestamp"])], (value["platform"], value["contexts"]["os"]))
+
     def test_png_has_valid_chunk_checksums(self):
         png = demo_png()
         self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))

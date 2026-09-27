@@ -12,6 +12,33 @@ Use query-builder questions over the reporting views for automatic **See these r
 
 A saved question with `display: "object"` presents a report as a readable detail card. A table with a configured primary key also supports Metabase's record detail view at `/table/{table_id}/detail/{primary_key}`. Related foreign keys provide navigation between projects, issues, reports and their child records. JSON fields remain available for deeper inspection; arrays of frames and breadcrumbs have dedicated views because Metabase's JSON unfolding does not expand arrays.
 
+## Two entry points, with progressive detail
+
+**Error reports** opens the Health overview dashboard. Its **Overview** tab answers how many error occurrences, grouped problems and affected identities were recorded, and when. **Problems** provides a ranked table: select a problem to open its occurrences, then select an event message or ID. Activity observations are excluded from that event list. **Event details** opens with a compact summary and the **Stack trace** tab; additional tabs contain **Breadcrumbs & logs**, **Attachments**, and **Context**. A missing stack is explicitly reported rather than presented as a successful capture. Original frame source context remains in the metadata JSON; the first tab surfaces function, file/line, source line and variables.
+
+**App usage** is the second entry point. Its native tabs separate the questions:
+
+| Tab | Questions answered |
+| --- | --- |
+| Overview | Unique active installation IDs, first observed installations, sessions started, and their time series |
+| Platforms | Active installations and session starts by operating system, plus audience trends by system |
+| Devices & versions | Active installations by system/version, device model and app version |
+| Collection quality | Sessions still open, latest outcomes grouped by start period, and missing identities or system correlations |
+
+Use **Time bucket** to choose `day`, `week` or `month` (or `hour` for a short investigation). Each bucket recalculates distinct identities; weekly/monthly values are not sums of daily users. These are calendar UTC buckets, with Monday-start weeks, truncated to the selected interval. A partial first bucket can have a label before the selected start. The usage date controls explicitly use **From (UTC)** inclusive and **Until (exclusive, UTC)**; the common provisioning CLI accepts inclusive dates and converts its end date. Overview counters cover the entire selected interval regardless of bucket size.
+
+Audience comes only from explicit `app_session` and `app_activity` events, not from the population that suffered errors. The client must send a stable random installation identity consistently across its SDKs. First observed means the first retained activity for that identity within the project; it is not proof of installation time. Reinstalls, identity resets and retention affect that estimate. Store downloads, real people and concurrent players cannot be recovered from these records. Distinct per-version/device counts must not be summed: an installation can change version or device metadata within an interval.
+
+Sentry session rows do not carry an operating-system dimension. Session charts correlate an activity observation only when **project, identity and canonical session UUID** all match (`tags.app_session_id` to the session `sid`). The observation supplies the OS name, not an inferred OS from an SDK platform such as `dart` or `native`. Missing/conflicting matches remain **Unknown** and are counted in Collection quality. This prevents plausible-looking but unsupported platform totals. Latest `ok` means still open in retained data, not currently connected or crash-free.
+
+Navigation between the two entry points opens each dashboard's saved filters; switching tabs retains its filters. The issue-to-occurrence path preserves project, date, environment and version, and occurrence-to-evidence preserves project and event. These scopes are selections, not access-control boundaries.
+
+## Version and upgrade decision
+
+On September 26, 2026, the latest stable release was **0.63.18**, already installed in the validation environment; **0.64.0-beta** was a prerelease. No upgrade was performed or required for these dashboards. The implementation uses native tabs, line/bar charts, tables, detail cards and explicit click destinations. Custom visualization plugins in the current documentation require Pro/Enterprise; they are not an OSS dependency of this workspace.
+
+For a later upgrade, read the release notes and official upgrade guide for the target version, back up the **Metabase application database** separately from the crash-cache telemetry database, pin the image version, stop the old instance, and let the new instance migrate its metadata. Test login, query/filter mappings, tabs, click destinations and evidence access before accepting it. A rollback restores the pre-upgrade application database with its matching image; do not run an older image against already-migrated metadata. Use a persistent PostgreSQL application database for a maintained deployment. An H2 database in a disposable container is a laboratory setup, not production persistence.
+
 ## Install the reporting views
 
 Apply normal crash-cache migrations first, including `20260926000001_rich_telemetry`. As the database/schema owner, apply:
@@ -53,7 +80,7 @@ After schema synchronization, use the existing private Metabase administrator en
 python3 scripts/provision_explorer.py --project 123 --database 2 --start 2026-09-01 --end 2026-09-21 --evidence-origin https://observability.example.com --event 456
 ```
 
-Replace the project and Metabase source database IDs with those of the deployment. The `Crash-cache Explorer` collection contains **Health overview**, **Event investigation**, **Sessions and logs**, and **Releases and devices**, plus their reusable query-builder questions. With `--evidence-origin`, a fifth **Event details** dashboard presents raw context, frames, breadcrumbs, correlated logs and authenticated attachment links/previews. The origin must be the browser-facing Metabase origin with the evidence route proxied to crash-cache. `--event` selects its initial record; omit it to start empty, then select an event from investigation. `--evidence-origin same-origin` creates relative links, but inline image previews require an absolute HTTP(S) origin in Metabase 0.63.18.
+Replace the project and Metabase source database IDs with those of the deployment. The `Crash-cache Explorer` collection contains **Health overview**, **Event investigation**, **Sessions and logs**, and **Releases and devices**, plus their reusable query-builder questions. The script also provisions **App usage**. With `--evidence-origin`, an **Event details** dashboard presents raw context, frames, breadcrumbs, correlated logs and authenticated attachment links/previews. The origin must be the browser-facing Metabase origin with the evidence route proxied to crash-cache. `--event` selects its initial record; omit it to start empty, then select an event from investigation. `--evidence-origin same-origin` creates relative links, but inline image previews require an absolute HTTP(S) origin in Metabase 0.63.18.
 
 The script configures table metadata and relationships, and prints the resulting collection, dashboard, question and table IDs. Open `/collection/{collection_id}` on the authenticated Metabase origin. It does not create users or publish anonymous links. It updates only objects carrying its management marker and refuses to overwrite unrelated content with the same name.
 
@@ -110,7 +137,7 @@ Configure Metabase's site URL to the reachable browser origin before generating 
 
 ## Demonstration data and acceptance checks
 
-`scripts/seed_observability_demo.py` generates original deterministic synthetic envelopes and a manifest. It defaults to a dry run and sends only with `--send`. Use a dedicated crash-cache project and stable start/seed parameters for reproducible replay. The workload contains several SDK platform labels, releases, sessions, failures, breadcrumbs, source context, variables, logs and small generated image attachments. The pictures are checkerboard fixtures, not application screenshots. No downloaded production dataset is necessary.
+`scripts/seed_observability_demo.py` generates original deterministic synthetic envelopes and a manifest. It defaults to a dry run and sends only with `--send`. Use a dedicated crash-cache project and stable start/seed parameters for reproducible replay. The default `demo-v2` events include their exact `app_session_id`; explicit `--seed demo-v1` preserves historical envelope bytes. To enrich an existing v1 demo with missing session context, keep its original start/seed/dimensions and add `--session-context-only --send`. This emits new deterministic informational observations only, without updating sessions or reproducing errors, logs or attachments. Replaying those observations retains their IDs. The workload contains several SDK platform labels, releases, sessions, failures, breadcrumbs, source context, variables, logs and small generated image attachments. The pictures are checkerboard fixtures, not application screenshots. No downloaded production dataset is necessary.
 
 After sending, compare database counts and session states with the manifest; HTTP acceptance only establishes admission, not successful digest processing. Keep the synthetic project clearly named in the interface. The data can demonstrate investigation and charts, but cannot establish production stability, real device distribution or ingestion capacity.
 
@@ -125,6 +152,11 @@ The implemented reporting surface covers stored reports, grouping, metadata, ses
 Continue with Metabase while the desired work is filtering, comparison, relational investigation and reading individual evidence. If triage workflows become necessary, introduce explicit persisted state and authority checks before exposing write actions. Metabase actions can write PostgreSQL, but blindly updating telemetry tables would bypass those rules. A custom frontend becomes justified only by demonstrated interaction needs that remain awkward after this authenticated, relational approach; it is not required merely because crash-cache lacks Sentry's web API.
 
 ## Primary references
+
+- [Metabase upgrade guide](https://www.metabase.com/docs/latest/installation-and-operation/upgrading-metabase)
+- [Metabase v0.63.18 release](https://github.com/metabase/metabase/releases/tag/v0.63.18)
+- [Native dashboard tabs](https://www.metabase.com/docs/latest/dashboards/introduction)
+- [Custom visualizations and edition requirements](https://www.metabase.com/docs/latest/questions/visualizations/custom)
 
 - [Metabase 0.63.18 drill-through contracts](https://github.com/metabase/metabase/blob/v0.63.18/docs/questions/visualizations/drill-through.md)
 - [Metabase 0.63.18 detail visualization](https://github.com/metabase/metabase/blob/v0.63.18/docs/questions/visualizations/detail.md)

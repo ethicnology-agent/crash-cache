@@ -109,7 +109,7 @@ def definitions(metadata, database_id):
              'aggregation':[['count'],['distinct',f('identity')],['min',f('event_at')],['max',f('event_at')]],
              'breakout':[field(metadata,'issues','title',**{'source-field':metadata['reports']['fields']['issue_key']['id']}),f('issue_key')],
              'order-by':[['desc',['aggregation',0]]]},'Counts and first/last times are recalculated after dashboard filters. Select an issue to inspect its lifetime record.'),
-        card('events','Event records','reports','table',{'fields':[f(n) for n in ('id','event_at','title','issue_key','environment','app_version','platform','device_model','identity')], 'order-by':[['desc',f('event_at')],['desc',f('id')]],'limit':200},'Most recent 200 events in scope. Select Record ID for full diagnostic context. Open the question to change its limit.'),
+        card('events','Event records','reports','table',{'filter':errors,'fields':[f(n) for n in ('id','event_at','title','issue_key','environment','app_version','platform','device_model','identity')], 'order-by':[['desc',f('event_at')],['desc',f('id')]],'limit':200},'Most recent 200 errors in scope. Select a message or event ID to open its stack trace. Open the question to change its limit.'),
         card('sessions','Session records','sessions','table',{'fields':[f(n,'sessions') for n in ('id','started_at','status','release','environment','identity','errors','duration')], 'order-by':[['desc',f('started_at','sessions')]],'limit':200},'Most recent SDK sessions; open and abnormal states remain explicit.'),
         card('session_status','Session status','sessions','bar',{'aggregation':[['count']],'breakout':[f('status','sessions')]},'Counts of recorded sessions by their latest reported status. This is not crash-free user coverage.'),
         card('logs','Log records','logs','table',{'fields':[f(n,'logs') for n in ('id','event_at','level','body','trace_id')], 'order-by':[['desc',f('event_at','logs')]],'limit':200},'Most recent 200 structured logs. Trace correlation requires an actual matching trace.'),
@@ -157,6 +157,25 @@ def mappings(metadata, definition, card_id, dashboard_name=None):
             for parameter,column in columns.items()]
 
 
+def preserve_dashboard_tabs(current, tiles):
+    """Keep tab identities during intermediate layout and link updates.
+
+    Metabase resets tabs when a dashcard PUT omits them. Every tile must also
+    reference a valid tab when tabs exist. New tiles temporarily use the first
+    tab until the workspace organizer applies their final section.
+    """
+    tabs = [{'id': tab['id'], 'name': tab['name']} for tab in current.get('tabs', [])]
+    by_id = {tile['id']: tile.get('dashboard_tab_id') for tile in current.get('dashcards', [])}
+    by_card = {tile['card_id']: tile.get('dashboard_tab_id')
+               for tile in current.get('dashcards', []) if tile.get('card_id')}
+    default = tabs[0]['id'] if tabs else None
+    allowed = {tab['id'] for tab in tabs}
+    for tile in tiles:
+        tab_id = by_id.get(tile['id'], by_card.get(tile.get('card_id'), default))
+        tile['dashboard_tab_id'] = tab_id if tab_id in allowed else default
+    return {'tabs': tabs, 'dashcards': tiles}
+
+
 def provision(api, project_id, start=None, end=None, database_id=2):
     today = dt.datetime.now(dt.timezone.utc).date()
     start = start or (today-dt.timedelta(days=20)).isoformat()
@@ -202,6 +221,8 @@ def provision(api, project_id, start=None, end=None, database_id=2):
         links=' | '.join(f'[{title}](/dashboard/{identifier})' for title,identifier in dashboards.items())
         banner='**Synthetic demonstration data; not production measurements.**' if os.environ.get('EXPLORER_DEMO')=='1' else '**Explore recorded application diagnostics.**'
         note=f'{banner}\n\n{links}\n\nSection links use their own saved/default filters. Chart drill-through retains the selected scope.'
+        if name=='Event investigation':
+            note+=' **Open a stack trace:** select an event message or its ID in Event records below. Activity observations are excluded.'
         if name=='Releases and devices':
             note+=' Version filters error charts; Release filters session outcomes. Project, period and environment apply to all three.'
         note_id=next((d['id'] for d in current.get('dashcards',[]) if d.get('card_id') is None),-1000)
@@ -212,7 +233,7 @@ def provision(api, project_id, start=None, end=None, database_id=2):
         description=MARKER+' Select a chart to drill into records. Period includes both dates. Identities are SDK identifiers, not verified people.'
         if name=='Sessions and logs':
             description+=' Environment and release apply to sessions only; logs have no normalized environment/release columns.'
-        api.call('PUT',f"/dashboard/{dashboard['id']}",{'description':description,'parameters':dashboard_parameters(project_id,start,end,name),'dashcards':dashcards})
+        api.call('PUT',f"/dashboard/{dashboard['id']}",{'description':description,'parameters':dashboard_parameters(project_id,start,end,name),**preserve_dashboard_tabs(current,dashcards)})
         dashboards[name]=dashboard['id']
     return {'collection_id':collection_id,'dashboards':dashboards,'cards':cards,
             'tables':{name:value['id'] for name,value in metadata.items()},'project_id':project_id,
@@ -243,6 +264,11 @@ def main():
                                      result['dashboards']['Health overview'])
             link_events(api,investigation,result['cards']['events'],detail['dashboard_id'])
             result['details']=detail
+        from provision_activity import provision as provision_activity
+        from explorer_workspace import organize
+        activity=provision_activity(api,args.database,result['collection_id'],args.project,result['start'],result['end'])
+        result['activity']=activity
+        result['workspace']=organize(api,result,activity)
         print(json.dumps(result))
     finally:
         if api.session:

@@ -118,6 +118,14 @@ class ExplorerContracts(unittest.TestCase):
             self.assertEqual(note['visualization_settings']['text'].count('](/dashboard/'),4)
             self.assertIn('default filters',note['visualization_settings']['text'])
 
+    def test_error_investigation_excludes_activity_events(self):
+        api=FakeApi()
+        provision(api,7)
+        events=next(c for c in api.cards if c['name']=='Event records')
+        query=events['dataset_query']['query']
+        issue_field=next(f['id'] for t in api.tables if t['name']=='reports' for f in t['fields'] if f['name']=='issue_key')
+        self.assertEqual(query.get('filter'),['not-null',['field',issue_field,None]])
+
     def test_missing_schema_refused_before_mutation(self):
         api=FakeApi()
         api.tables=[]

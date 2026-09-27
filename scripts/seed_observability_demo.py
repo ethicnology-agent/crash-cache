@@ -61,7 +61,8 @@ def encode_envelope(items: list[tuple[dict, object]], sent_at: dt.datetime) -> b
 
 
 def generate(start: dt.date, days: int = 21, installations: int = 80,
-             sessions_per_day: int = 48, seed: str = "demo-v1") -> tuple[list[bytes], dict]:
+             sessions_per_day: int = 48, seed: str = "demo-v2",
+             session_context_only: bool = False) -> tuple[list[bytes], dict]:
     if not (1 <= days <= 90 and 1 <= installations <= 100 and 1 <= sessions_per_day <= 100):
         raise ValueError("Bounds: days 1..90, installations 1..100, sessions-per-day 1..100")
     if days * sessions_per_day > 3000 or not seed or len(seed) > 80:
@@ -95,17 +96,30 @@ def generate(start: dt.date, days: int = 21, installations: int = 80,
             trace_id = identity(f"trace:{number}").replace("-", "")
             user_id = identity(f"installation:{person}")
             def event(kind: str, at: dt.datetime) -> dict:
-                return {"event_id": identity(f"{kind}:{number}").replace("-", ""), "timestamp": timestamp(at),
+                payload = {"event_id": identity(f"{kind}:{number}").replace("-", ""), "timestamp": timestamp(at),
                         "platform": platform, "release": release, "environment": environment, "level": "info",
                         "user": {"id": user_id}, "tags": {"synthetic": "true", "dataset": seed, "layer": layer,
                         "event_kind": "app_activity", "app_version": version},
                         "contexts": {"os": {"name": os_name, "version": os_version}, "device": {"model": model},
                                      "trace": {"trace_id": trace_id, "span_id": trace_id[:16], "op": "demo.checkout"}}}
+                # Preserve explicitly requested v1 envelopes byte-for-byte for safe replay.
+                if seed != "demo-v1" or session_context_only:
+                    payload["tags"]["app_session_id"] = session_id
+                return payload
             def session(seq: int, status: str, errors: int = 0) -> dict:
                 return {"sid": session_id, "did": user_id, "seq": seq, "init": seq == 0,
                         "started": timestamp(when), "timestamp": timestamp(when if seq == 0 else ended),
                         "duration": 0 if seq == 0 else duration, "errors": errors, "status": status,
                         "attrs": {"release": release, "environment": environment}}
+            if session_context_only:
+                # Separate deterministic IDs enrich old demos without overwriting an
+                # event, mutating session state or introducing artificial errors.
+                context = event("session-context-v1", when)
+                context["tags"]["event_kind"] = "app_session"
+                context["message"] = "Synthetic session context supplement"
+                envelopes.append(encode_envelope([({"type": "event"}, context)], when))
+                counts.update(events=1, activity_events=1, session_context_events=1)
+                continue
             activity = event("activity", when)
             activity["message"] = "Synthetic foreground observation"
             envelopes.append(encode_envelope([({"type": "event"}, activity), ({"type": "session"}, session(0, "ok"))], when))
@@ -160,6 +174,8 @@ def generate(start: dt.date, days: int = 21, installations: int = 80,
                            "Issue resolution is not inferred from absence of recent reports.",
                            "Open and abnormal sessions must remain visible.",
                            "HTTP acceptance does not establish successful digest processing."]}
+    if session_context_only:
+        manifest["session_context_only"] = True
     return envelopes, manifest
 
 
@@ -221,7 +237,8 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=21)
     parser.add_argument("--installations", type=int, default=80)
     parser.add_argument("--sessions-per-day", type=int, default=48)
-    parser.add_argument("--seed", default="demo-v1")
+    parser.add_argument("--seed", default="demo-v2")
+    parser.add_argument("--session-context-only", action="store_true", help="Only add new session context events; use the original seed/start/dimensions, including --seed demo-v1 for existing v1 data")
     parser.add_argument("--send", action="store_true", help="Explicitly POST to CRASH_CACHE_DSN; use an isolated synthetic project")
     parser.add_argument("--timeout", type=float, default=15)
     parser.add_argument("--interval", type=float, default=0.05, help="Minimum seconds between envelopes (0.05..5); HTTP 429 retries respect Retry-After within a 60-second budget")
@@ -229,7 +246,7 @@ def main() -> None:
     try:
         if not 0 < args.timeout <= 60:
             raise ValueError("timeout must be greater than zero and at most 60 seconds")
-        envelopes, manifest = generate(args.start, args.days, args.installations, args.sessions_per_day, args.seed)
+        envelopes, manifest = generate(args.start, args.days, args.installations, args.sessions_per_day, args.seed, args.session_context_only)
         manifest["http_accepted"] = send(envelopes, os.environ.get("CRASH_CACHE_DSN", ""), args.timeout, args.interval) if args.send else 0
         manifest["mode"] = "send" if args.send else "dry-run"
         print(json.dumps(manifest, indent=2, sort_keys=True))
