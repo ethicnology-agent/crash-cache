@@ -11,4 +11,4 @@ REVOKE ALL ON DATABASE crash_cache FROM PUBLIC;
 GRANT CONNECT ON DATABASE crash_cache TO crash_cache, metabase_readonly;
 GRANT USAGE ON SCHEMA public TO metabase_readonly;
 GRANT USAGE, CREATE ON SCHEMA public TO crash_cache;
-ALTER DEFAULT PRIVILEGES FOR ROLE crash_cache IN SCHEMA public GRANT SELECT ON TABLES TO metabase_readonly;
+-- After app migrations, install the explicit analytics permissions with docs/sql/explorer-permissions.sql.

@@ -8,14 +8,14 @@ from provision_metabase import MARKER, ProvisionError, rows, unique_managed
 
 
 def definitions(origin):
-    parsed = urlsplit(origin)
+    parsed = urlsplit(origin or '')
     if origin and (parsed.scheme not in ('http', 'https') or not parsed.netloc
             or parsed.username or parsed.password or parsed.path not in ('', '/')
             or parsed.query or parsed.fragment or "'" in origin):
         raise ProvisionError('Evidence origin must be an HTTP(S) origin without credentials')
     scope = 'project_id={{project_id}} AND id={{report_id}}'
     child_scope = 'project_id={{project_id}} AND report_id={{report_id}}'
-    return [
+    panels = [
         ('Event context', f'''SELECT exception_type AS "Error",message AS "Message",event_at AS "When",
 CASE WHEN jsonb_array_length(CASE WHEN jsonb_typeof(stack_frames)='array' THEN stack_frames ELSE '[]'::jsonb END)>0
 THEN jsonb_array_length(stack_frames)::text || ' captured frames'
@@ -30,11 +30,19 @@ FROM crash_cache_explorer.breadcrumbs WHERE {child_scope} ORDER BY chronology'''
 FROM crash_cache_explorer.report_logs r JOIN crash_cache_explorer.logs l ON l.id=r.log_id
 AND l.project_id=r.project_id WHERE r.project_id={{project_id}} AND r.report_id={{report_id}}
 ORDER BY l.event_at,l.id''', 'table', (22, 0, 24, 6)),
-        ('Event attachments', f"SELECT id,filename,content_type,size_bytes FROM crash_cache_explorer.attachments WHERE {child_scope} ORDER BY id", 'table', (28, 0, 24, 5)),
+        ('Event attachments', f'''SELECT id,filename,content_type,size_bytes,
+'{(origin or '').rstrip('/')}/api/evidence/attachments/' || id AS evidence_url,
+CASE WHEN content_type IN ('image/png','image/jpeg') THEN
+'{(origin or '').rstrip('/')}/api/evidence/attachments/' || id END AS image_preview
+FROM crash_cache_explorer.attachments WHERE {child_scope} ORDER BY id''', 'table', (28, 0, 24, 5)),
         ('Event metadata', f'''SELECT id,event_id,platform,environment,app_version,device_model,
 os_name,os_version,identity,layer,component,trace_id,tags,custom_contexts,stack_frames
 FROM crash_cache_explorer.reports WHERE {scope}''', 'object', (33, 0, 24, 10)),
     ]
+    if origin is None:
+        panels[4] = ('Event attachments', f"SELECT id,filename,content_type,size_bytes FROM crash_cache_explorer.attachments WHERE {child_scope} ORDER BY id", 'table', (28, 0, 24, 5))
+    return panels
+
 
 
 def provision(api, database_id, collection_id, project_id, report_id, origin, home_id):
@@ -53,6 +61,11 @@ def provision(api, database_id, collection_id, project_id, report_id, origin, ho
         if old and old.get('public_uuid'):
             raise ProvisionError('Event evidence questions must not be publicly shared')
         settings = {}
+        if name == 'Event attachments' and origin is not None:
+            settings = {'column_settings': {'["name","evidence_url"]': {
+                'column_title': 'Open attachment', 'view_as': 'link', 'link_text': 'View / download',
+                'link_url': '{{evidence_url}}'}, '["name","image_preview"]': {
+                'column_title': 'Preview', 'view_as': 'image'}}}
         body = {'name': name, 'description': MARKER + ' Authenticated raw evidence for one project and event.',
                 'collection_id': collection_id, 'display': display, 'visualization_settings': settings,
                 'dataset_query': {'database': database_id, 'type': 'native',

@@ -24,6 +24,13 @@ class EventDetailsTests(unittest.TestCase):
                 definitions(origin)
         self.assertTrue(definitions(''))
 
+    def test_metadata_only_details_do_not_link_to_a_disabled_binary_endpoint(self):
+        panel = next(sql for name, sql, _, _ in definitions(None) if name == 'Event attachments')
+        self.assertNotIn('/api/evidence/', panel)
+        self.assertNotIn('image_preview', panel)
+        enabled = next(sql for name, sql, _, _ in definitions('') if name == 'Event attachments')
+        self.assertIn('/api/evidence/attachments/', enabled)
+
     def test_order_is_explicit_and_correlation_is_exact(self):
         panels = {name: sql for name, sql, _, _ in definitions('https://observability.example.com')}
         self.assertIn('ORDER BY position', panels['Stack trace'])

@@ -247,6 +247,7 @@ def main():
     parser.add_argument('--database',type=int,default=int(os.environ.get('METABASE_DATABASE_ID','2')))
     parser.add_argument('--start')
     parser.add_argument('--end')
+    parser.add_argument('--evidence-origin', help='Common HTTP(S) origin or same-origin; requires the administrator evidence endpoint')
     parser.add_argument('--event-details', action='store_true', help='Provision event stacks and context; attachment metadata only')
     parser.add_argument('--event',type=int,default=0,help='Initial event record for the detail dashboard; zero starts empty')
     args=parser.parse_args()
@@ -259,8 +260,8 @@ def main():
         investigation=result['dashboards']['Event investigation']
         for dashboard in (result['dashboards']['Health overview'],investigation):
             link_issues(api,dashboard,result['cards']['issue_activity'],investigation)
-        if args.event_details:
-            origin=None
+        if args.event_details or args.evidence_origin is not None:
+            origin=('' if args.evidence_origin=='same-origin' else args.evidence_origin)
             detail=provision_details(api,args.database,result['collection_id'],args.project,args.event,origin,
                                      result['dashboards']['Health overview'])
             link_events(api,investigation,result['cards']['events'],detail['dashboard_id'])

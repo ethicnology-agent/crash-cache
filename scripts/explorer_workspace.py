@@ -90,7 +90,7 @@ def organize(api, result, activity_result):
                 (ids[0],0,0,24,5),(ids[1],5,0,24,10)]),
             ('Breadcrumbs', 'Captured breadcrumbs and logs with a matching trace.', [
                 (ids[2],0,0,24,9),(ids[3],9,0,24,8)]),
-            ('Files', 'Captured attachment metadata. Binary access is not enabled.', [
+            ('Files', 'Captured attachments. Binary access, when enabled, requires an active administrator.', [
                 (ids[4],0,0,24,12)]),
             ('Context', 'Device, release, tags and original context for this event.', [
                 (ids[5],0,0,24,12)]),
