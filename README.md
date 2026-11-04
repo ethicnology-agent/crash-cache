@@ -345,3 +345,7 @@ The `metabase_readonly` user has SELECT-only access to the crash_cache database 
 ## License
 
 AGPL-3.0 - See [LICENSE](LICENSE) for details.
+
+## Optional observability dashboards
+
+See [the isolated deployment guide](deploy/observability/README.md) and [dashboard provisioning](docs/metabase.md). This deployment provides aggregate analytics without requiring a native crash-processing service.
