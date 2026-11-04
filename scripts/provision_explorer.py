@@ -266,7 +266,15 @@ def main():
             link_events(api,investigation,result['cards']['events'],detail['dashboard_id'])
             result['details']=detail
         from provision_activity import provision as provision_activity
-        result['activity']=provision_activity(api,args.database,result['collection_id'],args.project,result['start'],result['end'])
+        from explorer_workspace import organize
+        activity=provision_activity(api,args.database,result['collection_id'],args.project,result['start'],result['end'])
+        result['activity']=activity
+        from provision_explorer_home import provision as provision_home, named_project_filters
+        result['home']=provision_home(api,result)
+        named_project_filters(api,result)
+        result['workspace']=organize(api,result,activity)
+        from explorer_navigation import provision as provision_navigation
+        result['navigation']=provision_navigation(api,result)
         print(json.dumps(result))
     finally:
         if api.session:
