@@ -335,7 +335,11 @@ async fn envelope_report(
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"Envelope has multiple events"})));
     }
     let has_event = event_count == 1;
-    if !has_event {
+    let has_logs = envelope.items.iter().any(|item| item.header.item_type == "log");
+    if let Err(error) = crate::shared::parser::sentry_log::parse_logs(&envelope) {
+        return map_domain_error_to_response(&error);
+    }
+    if !has_event && !has_logs {
         let payloads = envelope.find_session_payloads();
         if payloads.is_empty() {
             return (

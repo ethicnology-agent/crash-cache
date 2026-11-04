@@ -100,6 +100,14 @@ impl DigestReportUseCase {
 
         // Try to parse as envelope first to extract session
         let session_id = self.extract_and_store_session(conn, &decompressed, archive.project_id)?;
+        if let Some(envelope) = Envelope::parse(&decompressed).filter(|envelope| !envelope.items.is_empty()) {
+            crate::shared::persistence::rich_telemetry::store_envelope_context(conn, archive.project_id, &item.archive_hash, &envelope)?;
+            if envelope.find_event_payload().is_none() {
+                self.repos.queue.remove(conn, &item.archive_hash)?;
+                return Ok(());
+            }
+        }
+
 
         // Try parsing as raw JSON first, then as envelope format
 
