@@ -265,6 +265,8 @@ def main():
                                      result['dashboards']['Health overview'])
             link_events(api,investigation,result['cards']['events'],detail['dashboard_id'])
             result['details']=detail
+        from provision_activity import provision as provision_activity
+        result['activity']=provision_activity(api,args.database,result['collection_id'],args.project,result['start'],result['end'])
         print(json.dumps(result))
     finally:
         if api.session:

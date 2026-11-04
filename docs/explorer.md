@@ -7,3 +7,9 @@ Use database-owner access to install the views. Restrict the Explorer analytics 
 After synchronizing database metadata, run `python3 scripts/provision_explorer.py --project <id> --database <id> --event-details` with `METABASE_URL` and operator credentials in the private environment. Re-running preserves managed object IDs and refuses unmanaged or publicly shared objects. The provisioner creates the investigation dashboards and optional exact-event stack/context panels. Attachments are metadata only at this stage; there is no binary evidence endpoint.
 
 Compare issue occurrences after applying project/time filters to reports; lifetime issue totals must not be filtered by last-seen time to infer period counts. Order frames by position and breadcrumbs by chronology. Log correlation requires the same project and an exact nonzero trace ID. Missing frames, identities or logs remain missing rather than being inferred from nearby events.
+
+## Activity and period comparisons
+
+The additional Usage questions count explicit `app_session`/`app_activity` observations and recorded session starts. They do not establish people, store downloads or concurrent users. Installations require consistent pseudonymous identity on events and sessions. System correlation requires matching project, identity and canonical session UUID; unmatched rows remain unknown.
+
+Periods use continuous selected UTC calendar days within 2000–2100. Previous-period comparisons use an equal UTC duration; zero previous counts leave percentage change undefined. Coverage panels distinguish absent telemetry from known zero observations. Day/week/month counts are distinct within each bucket and must not be summed into a larger-period unique count. Re-run provisioning to add the Usage questions and named project/date selectors.
