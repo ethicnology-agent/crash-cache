@@ -91,3 +91,112 @@ async fn rich_mixed_sessions_logs_and_invalid_batches_are_atomic() {
     assert_eq!(count(&pool,project,"report"),0);
 }
 
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL DATABASE_URL"]
+async fn rich_attachments_and_frame_context_survive_event_replay() {
+    let (router,pool,repos,project) = setup();
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let event = json!({"event_id":id,"platform":"other","exception":{"values":[{"type":"SyntheticFailure","value":"probe","stacktrace":{"frames":[{"filename":"probe.gd","lineno":4,"vars":{"piece_count":12},"context_line":"fail()","pre_context":["start()"],"post_context":["stop()"]}]}}]}});
+    let event_item = || (json!({"type":"event"}),serde_json::to_vec(&event).unwrap());
+    let attachment = || (json!({"type":"attachment","filename":"screenshot.png","content_type":"image/png","attachment_type":"event.attachment"}),b"\x89PNG\x00\nopaque".to_vec());
+    let first = envelope(json!({"event_id":id}),vec![event_item(),attachment()]);
+    for _ in 0..2 { assert_eq!(send(&router,project,first.clone()).await,StatusCode::OK); digest(&pool,&repos); }
+    assert_eq!(count(&pool,project,"attachment_metadata"),1);
+    let next = envelope(json!({"event_id":id}),vec![event_item(),logs(vec![log()]),(json!({"type":"attachment","filename":"scene.json","content_type":"application/json"}),b"{\"nodes\":[]}".to_vec())]);
+    assert_eq!(send(&router,project,next).await,StatusCode::OK); digest(&pool,&repos);
+    assert_eq!(count(&pool,project,"report"),1);
+    assert_eq!(count(&pool,project,"attachment_metadata"),2,"duplicate event cannot discard new attachment metadata");
+    assert_eq!(count(&pool,project,"telemetry_log"),1);
+    let late = envelope(json!({"event_id":id}),vec![attachment()]);
+    assert_eq!(send(&router,project,late).await,StatusCode::OK); digest(&pool,&repos);
+    assert_eq!(count(&pool,project,"attachment_metadata"),3);
+    assert_eq!(count(&pool,project,"report"),1);
+    #[derive(QueryableByName)] struct Frames { #[diesel(sql_type = diesel::sql_types::Jsonb)] frames: Value }
+    let saved = diesel::sql_query("SELECT s.frames FROM unwrap_stacktrace s JOIN report r ON r.stacktrace_id=s.id WHERE r.project_id=$1")
+        .bind::<Integer,_>(project).get_result::<Frames>(&mut pool.get().unwrap()).unwrap();
+    assert_eq!(saved.frames[0]["vars"]["piece_count"],12);
+    assert_eq!(saved.frames[0]["context_line"],"fail()");
+    #[derive(QueryableByName)] struct Metadata { #[diesel(sql_type = BigInt)] bytes: i64 }
+    let saved = diesel::sql_query("SELECT size_bytes AS bytes FROM attachment_metadata WHERE project_id=$1 AND filename='screenshot.png' ORDER BY id LIMIT 1")
+        .bind::<Integer,_>(project).get_result::<Metadata>(&mut pool.get().unwrap()).unwrap();
+    assert_eq!(saved.bytes,b"\x89PNG\x00\nopaque".len() as i64);
+    let archived = repos.archive.find_by_hash(&mut pool.get().unwrap(), &{
+        #[derive(QueryableByName)] struct Hash { #[diesel(sql_type = diesel::sql_types::Text)] hash: String }
+        diesel::sql_query("SELECT archive_hash AS hash FROM attachment_metadata WHERE project_id=$1 ORDER BY id LIMIT 1")
+            .bind::<Integer,_>(project).get_result::<Hash>(&mut pool.get().unwrap()).unwrap().hash
+    }).unwrap().unwrap();
+    let bytes = GzipCompressor::new().decompress(&archived.compressed_payload).unwrap();
+    assert_eq!(bytes,first,"binary payload remains byte-exact in its archived envelope");
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL DATABASE_URL"]
+async fn rich_ingestion_preserves_raw_store_events() {
+    let (router,pool,repos,project) = setup();
+    let event = json!({"event_id":uuid::Uuid::new_v4().simple().to_string(),"platform":"other","message":"raw-store regression"});
+    let response = router.oneshot(Request::builder().method("POST")
+        .uri(format!("/api/{project}/store/?sentry_key=test"))
+        .body(Body::from(serde_json::to_vec(&event).unwrap())).unwrap()).await.unwrap();
+    assert_eq!(response.status(),StatusCode::OK); digest(&pool,&repos);
+    assert_eq!(count(&pool,project,"report"),1);
+    assert_eq!(count(&pool,project,"telemetry_log"),0);
+}
+
+#[test]
+#[ignore = "requires isolated PostgreSQL DATABASE_URL with CREATE SCHEMA"]
+fn rich_migration_up_down_up_preserves_published_tables() {
+    use diesel::connection::SimpleConnection;
+    let url = std::env::var("DATABASE_URL").expect("isolated DATABASE_URL required");
+    assert!(url.contains("crash_cache_test"));
+    let pool = establish_connection_pool(&url,1,10);
+    pool.get().unwrap().test_transaction::<_,diesel::result::Error,_>(|conn| {
+        conn.batch_execute("CREATE SCHEMA rich_migration_regression; SET LOCAL search_path TO rich_migration_regression;")?;
+        conn.batch_execute(include_str!("../migrations/00000000000000_initial_schema/up.sql"))?;
+        conn.batch_execute(include_str!("../migrations/20260926000000_event_identity/up.sql"))?;
+        conn.batch_execute(include_str!("../migrations/20260926000001_session_state/up.sql"))?;
+        conn.batch_execute("INSERT INTO project(id,created_at) VALUES (1,CURRENT_TIMESTAMP)")?;
+        conn.batch_execute(include_str!("../migrations/20260926000002_structured_logs/up.sql"))?;
+        conn.batch_execute(include_str!("../migrations/20260926000003_attachment_metadata/up.sql"))?;
+        conn.batch_execute(include_str!("../migrations/20260926000003_attachment_metadata/down.sql"))?;
+        conn.batch_execute(include_str!("../migrations/20260926000002_structured_logs/down.sql"))?;
+        conn.batch_execute(include_str!("../migrations/20260926000002_structured_logs/up.sql"))?;
+        conn.batch_execute(include_str!("../migrations/20260926000003_attachment_metadata/up.sql"))?;
+        #[derive(QueryableByName)] struct Count { #[diesel(sql_type = BigInt)] value: i64 }
+        let saved = diesel::sql_query("SELECT count(*) AS value FROM project WHERE id=1").get_result::<Count>(conn)?;
+        assert_eq!(saved.value,1);
+        Ok(())
+    });
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL DATABASE_URL"]
+async fn rich_thread_frames_preserve_variables_without_guessing_the_thread() {
+    let (router,pool,repos,project) = setup();
+    let thread_stack = json!({"frames":[{"filename":"probe.gd","function":"fail","lineno":12,"vars":{"piece_count":12}}]});
+    let cases = [
+        (json!([{"id":7,"stacktrace":thread_stack.clone()}]),None,true),
+        (json!([{"id":8,"stacktrace":thread_stack.clone()}]),None,false),
+        (json!([{"id":7,"stacktrace":thread_stack.clone()},{"id":"7","stacktrace":thread_stack.clone()}]),None,false),
+        (json!([{"id":7,"stacktrace":thread_stack.clone()}]),Some(json!({"frames":[{"filename":"explicit.gd","vars":{"piece_count":99}}]})),true),
+    ];
+    for (threads,explicit,has_stack) in cases {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let mut exception = json!({"type":"ThreadFailure","value":"synthetic thread fixture","thread_id":7});
+        if let Some(stack) = &explicit { exception["stacktrace"] = stack.clone(); }
+        let event = json!({"event_id":id,"platform":"other","exception":{"values":[exception]},"threads":{"values":threads}});
+        let payload = envelope(json!({"event_id":id}),vec![(json!({"type":"event"}),serde_json::to_vec(&event).unwrap())]);
+        assert_eq!(send(&router,project,payload).await,StatusCode::OK);
+        digest(&pool,&repos);
+        #[derive(QueryableByName)] struct Saved {
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Jsonb>)] frames: Option<Value>
+        }
+        let saved = diesel::sql_query("SELECT s.frames FROM report r LEFT JOIN unwrap_stacktrace s ON r.stacktrace_id=s.id WHERE r.project_id=$1 AND r.event_id=$2")
+            .bind::<Integer,_>(project).bind::<diesel::sql_types::Text,_>(&id)
+            .get_result::<Saved>(&mut pool.get().unwrap()).unwrap();
+        assert_eq!(saved.frames.is_some(),has_stack,"only explicit stacks or unique thread references may supply frames");
+        if let Some(frames) = saved.frames {
+            assert_eq!(frames[0]["vars"]["piece_count"],if explicit.is_some() { 99 } else { 12 });
+            assert!(frames[0].get("context_line").is_none(),"source context absent from the SDK must not be invented");
+        }
+    }
+}

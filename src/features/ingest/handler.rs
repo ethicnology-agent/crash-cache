@@ -339,7 +339,8 @@ async fn envelope_report(
     if let Err(error) = crate::shared::parser::sentry_log::parse_logs(&envelope) {
         return map_domain_error_to_response(&error);
     }
-    if !has_event && !has_logs {
+    let has_attachments = envelope.items.iter().any(|item| item.header.item_type == "attachment");
+    if !has_event && !has_logs && !has_attachments {
         let payloads = envelope.find_session_payloads();
         if payloads.is_empty() {
             return (
@@ -376,7 +377,7 @@ async fn envelope_report(
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Envelope and event IDs differ"})));
     }
     let event_id = header_id.or(body_id);
-    if has_event && event_id.is_none() {
+    if (has_event || has_attachments) && event_id.is_none() {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Event or attachment requires a valid event_id"})));
     }
 
