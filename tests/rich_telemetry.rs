@@ -90,4 +90,3 @@ async fn rich_mixed_sessions_logs_and_invalid_batches_are_atomic() {
     assert_eq!(count(&pool,project,"telemetry_log"),1);
     assert_eq!(count(&pool,project,"report"),0);
 }
-
