@@ -117,7 +117,8 @@ impl DigestReportUseCase {
 
         // Try parsing as raw JSON first, then as envelope format
 
-        let sentry_report = self.parse_payload(&decompressed)?;
+        let mut sentry_report = self.parse_payload(&decompressed)?;
+        sentry_report.resolve_exception_thread_stacks();
         let result = conn.transaction(|conn| self.store_event(conn, item, archive.project_id, session_id, &sentry_report));
         match result {
             Ok(_) | Err(DomainError::DuplicateEventId(_)) => self.repos.queue.remove(conn, &item.archive_hash),
@@ -160,7 +161,7 @@ impl DigestReportUseCase {
             self.extract_app_info(conn, &sentry_report)?;
         let user_id = self.extract_user_info(conn, &sentry_report)?;
         let (exception_type_id, exception_message_id, stacktrace_id, issue_id) =
-            self.extract_exception_info(conn, sentry_report)?;
+            self.extract_exception_info(conn, sentry_report, project_id)?;
 
         let new_report = NewReport {
             event_id,
@@ -649,6 +650,7 @@ impl DigestReportUseCase {
         &self,
         conn: &mut DbConnection,
         report: &SentryReport,
+        project_id: i32,
     ) -> Result<ExceptionIds, DomainError> {
         let exception = report
             .exception
@@ -673,35 +675,45 @@ impl DigestReportUseCase {
             None => None,
         };
 
-        let in_app_frames = report.extract_in_app_frames();
-        let (fingerprint_hash, stacktrace_hash) = if !in_app_frames.is_empty() {
-            let fingerprint_data = in_app_frames
-                .iter()
-                .map(|f| {
-                    format!(
-                        "{}:{}:{}",
-                        f.filename.as_deref().unwrap_or(""),
-                        f.function.as_deref().unwrap_or(""),
-                        f.lineno.unwrap_or(0)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("|");
-            let fingerprint = self.compute_hash(fingerprint_data.as_bytes());
+        if exception.is_none() && matches!(report.level.as_deref(), Some("info" | "debug")) {
+            return Ok((None, None, None, None));
+        }
 
-            let all_frames = exception
-                .and_then(|e| e.stacktrace.as_ref())
-                .and_then(|s| s.frames.as_ref());
-
-            let stacktrace_hash = all_frames.map(|frames| {
-                let frames_json = serde_json::to_string(frames).unwrap_or_default();
-                self.compute_hash(frames_json.as_bytes())
-            });
-
-            (Some(fingerprint), stacktrace_hash)
-        } else {
-            (None, None)
+        let all_frames = exception.and_then(|exception| exception.stacktrace.as_ref()).and_then(|trace| trace.frames.as_ref());
+        let mut grouping_frames = report.extract_in_app_frames();
+        if grouping_frames.is_empty() {
+            grouping_frames = all_frames.map(|frames| frames.iter().collect()).unwrap_or_default();
+        }
+        let fingerprint_hash = if grouping_frames.is_empty() { None } else {
+            let frames: Vec<serde_json::Value> = grouping_frames.iter().map(|frame| {
+                serde_json::json!([frame.filename, frame.function, frame.lineno, frame.package,
+                    if frame.function.is_none() { frame.extra.get("instruction_addr") } else { None }])
+            }).collect();
+            Some(self.compute_hash(serde_json::to_string(&frames).unwrap_or_default().as_bytes()))
         };
+        let stacktrace_hash = all_frames.map(|frames| self.compute_hash(serde_json::to_string(frames).unwrap_or_default().as_bytes()));
+
+        // Explicit SDK fingerprints override grouping, never event occurrence identity.
+        // Default grouping is deliberately local, not a claim of Sentry algorithm parity.
+        let default_group = fingerprint_hash.clone().map(|stack| self.compute_hash(
+            serde_json::json!([report.platform, exception.and_then(|value| value.exception_type.as_ref()), stack]).to_string().as_bytes()
+        )).unwrap_or_else(|| self.compute_hash(
+            serde_json::json!({
+                "platform": report.platform,
+                "exception": exception.map(|value| (&value.exception_type, &value.value)),
+                "message": report.unknown.get("message"),
+                "logentry": report.unknown.get("logentry"),
+            }).to_string().as_bytes()
+        ));
+        let fingerprints = report.unknown.get("fingerprint").and_then(|value| value.as_array());
+        let values: Vec<String> = match fingerprints.filter(|values| !values.is_empty() && values.iter().all(|value| value.is_string())) {
+            Some(values) => values.iter().map(|value| {
+                let value = value.as_str().unwrap_or_default();
+                if value.replace(' ', "") == "{{default}}" { default_group.clone() } else { value.to_owned() }
+            }).collect(),
+            None => vec![default_group],
+        };
+        let fingerprint_hash = Some(self.compute_hash(serde_json::json!([project_id, values]).to_string().as_bytes()));
 
         let issue_id = match &fingerprint_hash {
             Some(fp) => {
