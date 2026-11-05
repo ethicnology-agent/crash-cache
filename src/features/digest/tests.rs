@@ -384,11 +384,8 @@ fn test_process_breadcrumbs_seq_preserved() {
     assert!(rows[0].1 < rows[1].1 && rows[1].1 < rows[2].1);
 }
 
-/// End-to-end against the real-world `crash.jsonl` sample at the repo root.
-/// Skipped by default (no fixture in CI); run manually with:
-///   `DATABASE_URL=... cargo test e2e_crash_jsonl_breadcrumbs -- --ignored --test-threads=1 --nocapture`
+/// Exercise normalized JSONL imports with a deterministic, non-private fixture.
 #[test]
-#[ignore]
 fn e2e_crash_jsonl_breadcrumbs() {
     use diesel::prelude::*;
     use crate::shared::persistence::db::schema::{report_breadcrumb, unwrap_breadcrumb};
@@ -516,7 +513,7 @@ fn test_process_multiple_events() {
     assert_eq!(queue_repo.count_pending(&mut conn).unwrap(), 0);
 }
 
-    #[test]
+#[test]
 fn protocol_event_retries_are_idempotent_and_project_scoped() {
     let (repos, pool, first_project) = setup_test_db();
     let second_project = repos.project.create(None, None).unwrap();
@@ -541,7 +538,8 @@ fn protocol_event_retries_are_idempotent_and_project_scoped() {
     assert_eq!(repos.report.count_by_project(second_project).unwrap(), 1);
     assert_eq!(repos.queue_error.count(&mut conn).unwrap(), 0);
 }
-    #[test]
+
+#[test]
 fn protocol_envelope_header_event_id_is_preserved() {
     let (repos, pool, project_id) = setup_test_db();
     let ingest = IngestReportUseCase::new(repos.archive.clone(), repos.queue.clone(), repos.project.clone());
@@ -551,4 +549,39 @@ fn protocol_envelope_header_event_id_is_preserved() {
     ingest.execute(&mut pool.get().unwrap(), project_id, hash, compressed, None).unwrap();
     digest.process_batch(10).unwrap();
     assert!(repos.report.find_by_event_id("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap().is_some());
+}
+
+#[test]
+fn protocol_explicit_fingerprint_groups_without_collapsing_occurrences() {
+    use diesel::prelude::*;
+    use crate::shared::persistence::db::schema::report;
+    let (repos, pool, project_id) = setup_test_db();
+    let ingest = IngestReportUseCase::new(repos.archive.clone(), repos.queue.clone(), repos.project.clone());
+    let digest = DigestReportUseCase::new(repos.clone(), pool.clone(), GzipCompressor::new());
+    let mut conn = pool.get().unwrap();
+    for (event_id, fingerprint) in [("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "network-timeout"), ("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "network-timeout"), ("cccccccccccccccccccccccccccccccc", "storage-failed")] {
+        let payload = serde_json::to_vec(&serde_json::json!({"event_id":event_id,"fingerprint":[fingerprint],"message":"operation failed"})).unwrap();
+        let (hash, compressed) = compress_and_hash(&payload);
+        ingest.execute(&mut conn, project_id, hash, compressed, None).unwrap();
+        digest.process_batch(10).unwrap();
+    }
+    let issues: Vec<Option<i32>> = report::table.order(report::event_id).select(report::issue_id).load(&mut conn).unwrap();
+    assert_eq!(issues.len(), 3);
+    assert!(issues[0].is_some());
+    assert_eq!(issues[0], issues[1]);
+    assert_ne!(issues[1], issues[2]);
+}
+
+#[test]
+fn protocol_usage_event_does_not_create_an_error_issue() {
+    let (repos, pool, project_id) = setup_test_db();
+    let ingest = IngestReportUseCase::new(repos.archive.clone(), repos.queue.clone(), repos.project.clone());
+    let digest = DigestReportUseCase::new(repos.clone(), pool.clone(), GzipCompressor::new());
+    let payload = br#"{"event_id":"dddddddddddddddddddddddddddddddd","level":"info","message":"app.session.started","tags":{"event_kind":"app_session"},"user":{"id":"test-installation"}}"#;
+    let (hash, compressed) = compress_and_hash(payload);
+    ingest.execute(&mut pool.get().unwrap(), project_id, hash, compressed, None).unwrap();
+    digest.process_batch(10).unwrap();
+    let report = repos.report.find_by_event_id("dddddddddddddddddddddddddddddddd").unwrap().unwrap();
+    assert!(report.issue_id.is_none());
+    assert!(report.user_id.is_some());
 }
