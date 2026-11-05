@@ -254,6 +254,37 @@ impl SentryReport {
     }
 }
 
+fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(serde_json::Value::String(value)) => Ok(Some(value)),
+        Some(serde_json::Value::Number(value)) => {
+            let seconds = value.as_f64().ok_or_else(|| serde::de::Error::custom("Invalid timestamp"))?;
+            let milliseconds = seconds * 1000.0;
+            if !milliseconds.is_finite() || milliseconds < i64::MIN as f64 || milliseconds >= i64::MAX as f64 {
+                return Err(serde::de::Error::custom("Timestamp out of range"));
+            }
+            chrono::DateTime::from_timestamp_millis(milliseconds.round() as i64)
+                .map(|value| Some(value.to_rfc3339_opts(chrono::SecondsFormat::Millis, false)))
+                .ok_or_else(|| serde::de::Error::custom("Timestamp out of range"))
+        }
+        _ => Err(serde::de::Error::custom("Timestamp must be a string or number")),
+    }
+}
+
+fn deserialize_breadcrumbs<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<SentryBreadcrumb>>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Breadcrumbs {
+        Array(Vec<SentryBreadcrumb>),
+        Wrapped { values: Vec<SentryBreadcrumb> },
+    }
+    Ok(Option::<Breadcrumbs>::deserialize(deserializer)?.map(|value| match value {
+        Breadcrumbs::Array(values) | Breadcrumbs::Wrapped { values } => values,
+    }))
+}
+
 #[cfg(test)]
 mod protocol_tests {
     use super::SentryReport;
@@ -314,35 +345,4 @@ mod protocol_tests {
         })).unwrap();
         assert_eq!(report.breadcrumbs.unwrap().len(), 1);
     }
-}
-
-fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
-    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
-    match value {
-        None => Ok(None),
-        Some(serde_json::Value::String(value)) => Ok(Some(value)),
-        Some(serde_json::Value::Number(value)) => {
-            let seconds = value.as_f64().ok_or_else(|| serde::de::Error::custom("Invalid timestamp"))?;
-            let milliseconds = seconds * 1000.0;
-            if !milliseconds.is_finite() || milliseconds < i64::MIN as f64 || milliseconds >= i64::MAX as f64 {
-                return Err(serde::de::Error::custom("Timestamp out of range"));
-            }
-            chrono::DateTime::from_timestamp_millis(milliseconds.round() as i64)
-                .map(|value| Some(value.to_rfc3339_opts(chrono::SecondsFormat::Millis, false)))
-                .ok_or_else(|| serde::de::Error::custom("Timestamp out of range"))
-        }
-        _ => Err(serde::de::Error::custom("Timestamp must be a string or number")),
-    }
-}
-
-fn deserialize_breadcrumbs<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<SentryBreadcrumb>>, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Breadcrumbs {
-        Array(Vec<SentryBreadcrumb>),
-        Wrapped { values: Vec<SentryBreadcrumb> },
-    }
-    Ok(Option::<Breadcrumbs>::deserialize(deserializer)?.map(|value| match value {
-        Breadcrumbs::Array(values) | Breadcrumbs::Wrapped { values } => values,
-    }))
 }
